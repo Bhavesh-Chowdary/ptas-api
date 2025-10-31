@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import pool from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
+import taskRoutes from './routes/taskRoutes.js';
 
 dotenv.config();
 
@@ -14,8 +15,9 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // Routes
-app.use('/auth', authRoutes);
-app.use('/projects', projectRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/tasks', taskRoutes);
 
 
 // Health check
