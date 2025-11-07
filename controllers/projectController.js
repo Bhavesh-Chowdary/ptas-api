@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import fs from 'fs';
 
 export const createProject = async (req, res) => {
   try {
@@ -7,15 +8,75 @@ export const createProject = async (req, res) => {
 
     if (!name) return res.status(400).json({ error: 'Project name is required' });
 
-    const q = `INSERT INTO projects (name, description, start_date, end_date, status, created_by)
-               VALUES ($1, $2, $3, $4, $5, $6)
-               RETURNING *`;
-    const result = await pool.query(q, [name, description, start_date, end_date, status || 'active', created_by]);
+    let fileBuffer = null;
+    let fileName = null;
+    let fileType = null;
+
+    if (req.file) {
+      fileBuffer = fs.readFileSync(req.file.path);
+      fileName = req.file.originalname;
+      fileType = req.file.mimetype;
+    }
+
+    const q = `
+      INSERT INTO projects (name, description, start_date, end_date, status, created_by, document, document_name, document_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING *`;
+
+    const result = await pool.query(q, [
+      name,
+      description,
+      start_date || null,
+      end_date || null,
+      status || 'active',
+      created_by,
+      fileBuffer,
+      fileName,
+      fileType
+    ]);
+
+    if (req.file) fs.unlinkSync(req.file.path);
+
     res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const getProjectById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const q = `
+      SELECT id, name, description, start_date, end_date, status, created_by,
+             document_name, document_type, created_at, updated_at
+      FROM projects WHERE id = $1`;
+    const result = await pool.query(q, [id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+export const downloadDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const q = `SELECT document, document_name, document_type FROM projects WHERE id = $1`;
+    const result = await pool.query(q, [id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
+
+    const file = result.rows[0];
+    if (!file.document) return res.status(404).json({ error: 'No document uploaded' });
+
+    res.setHeader('Content-Disposition', `attachment; filename="${file.document_name}"`);
+    res.setHeader('Content-Type', file.document_type);
+    res.send(file.document);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 
 export const getProjects = async (req, res) => {
   try {
@@ -27,23 +88,6 @@ export const getProjects = async (req, res) => {
     `;
     const result = await pool.query(q);
     res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-export const getProjectById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const q = `
-      SELECT p.*, u.full_name AS created_by_name
-      FROM projects p
-      LEFT JOIN users u ON u.id = p.created_by
-      WHERE p.id = $1
-    `;
-    const result = await pool.query(q, [id]);
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
-    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
