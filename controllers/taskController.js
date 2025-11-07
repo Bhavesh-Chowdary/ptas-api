@@ -92,26 +92,37 @@ export const deleteTask = async (req, res) => {
   }
 };
 
+import { logChange } from './changeLogController.js';
+// Update task (with change logging + auto time log)
 export const updateTask = async (req, res) => {
   try {
     const { id } = req.params;
     const before = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (before.rowCount === 0) return res.status(404).json({ error: 'Task not found' });
 
-    const { status, actual_hours } = req.body;
+    const { title, description, assignee_id, status, est_hours, actual_hours, start_date, end_date } = req.body;
     const user_id = req.user.userId;
 
     const q = `
       UPDATE tasks
-      SET status = COALESCE($1, status),
-          actual_hours = COALESCE($2, actual_hours),
+      SET title = COALESCE($1, title),
+          description = COALESCE($2, description),
+          assignee_id = COALESCE($3, assignee_id),
+          status = COALESCE($4, status),
+          est_hours = COALESCE($5, est_hours),
+          actual_hours = COALESCE($6, actual_hours),
+          start_date = COALESCE($7, start_date),
+          end_date = COALESCE($8, end_date),
           updated_at = NOW()
-      WHERE id = $3
+      WHERE id = $9
       RETURNING *`;
-    const result = await pool.query(q, [status, actual_hours, id]);
+    const result = await pool.query(q, [title, description, assignee_id, status, est_hours, actual_hours, start_date, end_date, id]);
     const after = result.rows[0];
 
-    // Auto-log when task is done or started
+    // Log change
+    await logChange('task', id, 'update', before.rows[0], after, user_id);
+
+    // Auto-log time for status changes
     if (status === 'in_progress') {
       await autoLogTime(id, user_id, 30, 'Auto-log: Task started');
     } else if (status === 'done') {
@@ -123,3 +134,4 @@ export const updateTask = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+

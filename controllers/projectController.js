@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { logChange } from './changeLogController.js';
 import fs from 'fs';
 
 export const createProject = async (req, res) => {
@@ -96,8 +97,10 @@ export const getProjects = async (req, res) => {
 export const updateProject = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, start_date, end_date, status } = req.body;
+    const before = await pool.query('SELECT * FROM projects WHERE id = $1', [id]);
+    if (before.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
 
+    const { name, description, start_date, end_date, status } = req.body;
     const q = `
       UPDATE projects
       SET name = COALESCE($1, name),
@@ -110,8 +113,10 @@ export const updateProject = async (req, res) => {
       RETURNING *`;
     const result = await pool.query(q, [name, description, start_date, end_date, status, id]);
 
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
-    res.json(result.rows[0]);
+    const after = result.rows[0];
+    await logChange('project', id, 'update', before.rows[0], after, req.user.userId);
+
+    res.json(after);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

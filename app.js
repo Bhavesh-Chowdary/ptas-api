@@ -9,6 +9,8 @@ import taskRoutes from './routes/taskRoutes.js';
 import moduleRoutes from './routes/moduleRoutes.js';
 import sprintRoutes from './routes/sprintRoutes.js';
 import timesheetRoutes from './routes/timesheetRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
+import changeLogRoutes from './routes/changeLogRoutes.js';
 
 dotenv.config();
 
@@ -24,6 +26,8 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/modules', moduleRoutes);
 app.use('/api/sprints', sprintRoutes);
 app.use('/api/timesheets', timesheetRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/change-logs', changeLogRoutes);
 
 // Health check
 app.get('/health', async (req, res) => {

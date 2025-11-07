@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { logChange } from './changeLogController.js';
 
 export const createModule = async (req, res) => {
   try {
@@ -55,9 +56,13 @@ export const getModuleById = async (req, res) => {
   }
 };
 
+// Update module (with change logging)
 export const updateModule = async (req, res) => {
   try {
     const { id } = req.params;
+    const before = await pool.query('SELECT * FROM modules WHERE id = $1', [id]);
+    if (before.rowCount === 0) return res.status(404).json({ error: 'Module not found' });
+
     const { name, description } = req.body;
     const q = `
       UPDATE modules
@@ -67,8 +72,11 @@ export const updateModule = async (req, res) => {
       WHERE id = $3
       RETURNING *`;
     const result = await pool.query(q, [name, description, id]);
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Module not found' });
-    res.json(result.rows[0]);
+    const after = result.rows[0];
+
+    await logChange('module', id, 'update', before.rows[0], after, req.user.userId);
+
+    res.json(after);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

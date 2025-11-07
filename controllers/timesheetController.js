@@ -71,25 +71,33 @@ export const getTimesheets = async (req, res) => {
   }
 };
 
-// Approve a timesheet entry
+import { logChange } from './changeLogController.js';
+
+// Approve timesheet (with change log)
 export const approveTimesheet = async (req, res) => {
   try {
     const { id } = req.params;
     const approved_by = req.user.userId;
 
+    const before = await pool.query('SELECT * FROM timesheets WHERE id = $1', [id]);
+    if (before.rowCount === 0) return res.status(404).json({ error: 'Timesheet not found' });
+
     const q = `
       UPDATE timesheets
-      SET approved = TRUE, approved_by = $1
+      SET approved_by = $1
       WHERE id = $2
       RETURNING *`;
     const result = await pool.query(q, [approved_by, id]);
+    const after = result.rows[0];
 
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Timesheet not found' });
-    res.json({ message: 'Timesheet approved', data: result.rows[0] });
+    await logChange('timesheet', id, 'approve', before.rows[0], after, approved_by);
+
+    res.json({ message: 'Timesheet approved successfully', data: after });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // Weekly summary report
 export const getWeeklySummary = async (req, res) => {

@@ -60,12 +60,16 @@ export const getSprintById = async (req, res) => {
   }
 };
 
-// Update sprint
+import { logChange } from './changeLogController.js';
+
+// Update sprint (with change logging)
 export const updateSprint = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, start_date, end_date, status, notes } = req.body;
+    const before = await pool.query('SELECT * FROM sprints WHERE id = $1', [id]);
+    if (before.rowCount === 0) return res.status(404).json({ error: 'Sprint not found' });
 
+    const { name, start_date, end_date, status, notes } = req.body;
     const q = `
       UPDATE sprints
       SET name = COALESCE($1, name),
@@ -77,8 +81,11 @@ export const updateSprint = async (req, res) => {
       WHERE id = $6
       RETURNING *`;
     const result = await pool.query(q, [name, start_date, end_date, status, notes, id]);
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Sprint not found' });
-    res.json(result.rows[0]);
+    const after = result.rows[0];
+
+    await logChange('sprint', id, 'update', before.rows[0], after, req.user.userId);
+
+    res.json(after);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
