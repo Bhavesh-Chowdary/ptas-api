@@ -62,7 +62,7 @@ export const getTasks = async (req, res) => {
 
 export const getTaskById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const q = `
       SELECT t.*, 
              p.name AS project_name,
@@ -83,7 +83,7 @@ export const getTaskById = async (req, res) => {
 
 export const deleteTask = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const result = await pool.query('DELETE FROM tasks WHERE id = $1 RETURNING *', [id]);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Task not found' });
     res.json({ message: 'Task deleted successfully' });
@@ -96,7 +96,7 @@ import { logChange } from './changeLogController.js';
 // Update task (with change logging + auto time log)
 export const updateTask = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const before = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (before.rowCount === 0) return res.status(404).json({ error: 'Task not found' });
 

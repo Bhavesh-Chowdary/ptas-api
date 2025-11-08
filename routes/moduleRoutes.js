@@ -15,8 +15,8 @@ router.use(authMiddleware);
 
 router.post('/', permit('admin', 'pm'), createModule);
 router.get('/', getModules);
-router.get('/:id', getModuleById);
-router.patch('/:id', permit('admin', 'pm'), updateModule);
-router.delete('/:id', permit('admin', 'pm'), deleteModule);
+router.get('/id', getModuleById);
+router.patch('/id', permit('admin', 'pm'), updateModule);
+router.delete('/id', permit('admin', 'pm'), deleteModule);
 
 export default router;

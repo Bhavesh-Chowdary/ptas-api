@@ -15,8 +15,8 @@ router.use(authMiddleware);
 
 router.post('/', permit('admin', 'pm'), createTask);
 router.get('/', getTasks);
-router.get('/:id', getTaskById);
-router.patch('/:id', permit('admin', 'pm', 'developer', 'qa'), updateTask);
-router.delete('/:id', permit('admin', 'pm'), deleteTask);
+router.get('/id', getTaskById);
+router.patch('/id', permit('admin', 'pm', 'developer', 'qa'), updateTask);
+router.delete('/id', permit('admin', 'pm'), deleteTask);
 
 export default router;

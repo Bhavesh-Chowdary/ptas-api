@@ -20,9 +20,9 @@ router.use(authMiddleware);
 
 router.post('/', permit('admin', 'pm'), upload.single('document'), createProject);
 router.get('/', getProjects);
-router.get('/:id', getProjectById);
+router.get('/id', getProjectById);
 router.get('/:id/document', downloadDocument);
-router.patch('/:id', permit('admin', 'pm'), updateProject);
-router.delete('/:id', permit('admin'), deleteProject);
+router.patch('/id', permit('admin', 'pm'), updateProject);
+router.delete('/id', permit('admin'), deleteProject);
 
 export default router;

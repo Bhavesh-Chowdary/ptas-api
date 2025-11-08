@@ -15,8 +15,8 @@ router.use(authMiddleware);
 
 router.post('/', permit('admin', 'pm'), createSprint);
 router.get('/', getSprints);
-router.get('/:id', getSprintById);
-router.patch('/:id', permit('admin', 'pm'), updateSprint);
-router.delete('/:id', permit('admin', 'pm'), deleteSprint);
+router.get('/id', getSprintById);
+router.patch('/id', permit('admin', 'pm'), updateSprint);
+router.delete('/id', permit('admin', 'pm'), deleteSprint);
 
 export default router;

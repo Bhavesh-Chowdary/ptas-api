@@ -47,7 +47,7 @@ export const createProject = async (req, res) => {
 
 export const getProjectById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const q = `
       SELECT id, name, description, start_date, end_date, status, created_by,
              document_name, document_type, created_at, updated_at
@@ -96,7 +96,7 @@ export const getProjects = async (req, res) => {
 
 export const updateProject = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const before = await pool.query('SELECT * FROM projects WHERE id = $1', [id]);
     if (before.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
 
@@ -124,7 +124,7 @@ export const updateProject = async (req, res) => {
 
 export const deleteProject = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const q = `DELETE FROM projects WHERE id = $1 RETURNING *`;
     const result = await pool.query(q, [id]);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Project not found' });

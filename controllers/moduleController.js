@@ -42,7 +42,7 @@ export const getModules = async (req, res) => {
 
 export const getModuleById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const q = `
       SELECT m.*, p.name AS project_name
       FROM modules m
@@ -59,7 +59,7 @@ export const getModuleById = async (req, res) => {
 // Update module (with change logging)
 export const updateModule = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const before = await pool.query('SELECT * FROM modules WHERE id = $1', [id]);
     if (before.rowCount === 0) return res.status(404).json({ error: 'Module not found' });
 
@@ -84,7 +84,7 @@ export const updateModule = async (req, res) => {
 
 export const deleteModule = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.query;
     const q = 'DELETE FROM modules WHERE id = $1 RETURNING *';
     const result = await pool.query(q, [id]);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Module not found' });
