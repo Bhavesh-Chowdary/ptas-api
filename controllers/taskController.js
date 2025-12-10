@@ -1,7 +1,6 @@
 import pool from '../config/db.js';
 import { autoLogTime } from './timesheetController.js';
 
-// Generate simple task key (e.g. PROJ-001)
 const generateTaskKey = async (projectId) => {
   const countRes = await pool.query('SELECT COUNT(*) FROM tasks WHERE project_id = $1', [projectId]);
   const count = parseInt(countRes.rows[0].count) + 1;

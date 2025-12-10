@@ -56,7 +56,6 @@ export const getModuleById = async (req, res) => {
   }
 };
 
-// Update module (with change logging)
 export const updateModule = async (req, res) => {
   try {
     const { id } = req.query;

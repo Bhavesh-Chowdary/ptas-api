@@ -1,6 +1,5 @@
 import pool from '../config/db.js';
 
-// Create manual log
 export const createTimesheet = async (req, res) => {
   try {
     const { task_id, minutes_logged, notes, log_date } = req.body;
@@ -27,7 +26,6 @@ export const createTimesheet = async (req, res) => {
   }
 };
 
-// Auto-log time when a task changes status
 export const autoLogTime = async (task_id, user_id, minutes, note) => {
   try {
     await pool.query(
@@ -40,7 +38,6 @@ export const autoLogTime = async (task_id, user_id, minutes, note) => {
   }
 };
 
-// Get user timesheets (filter by week/user)
 export const getTimesheets = async (req, res) => {
   try {
     const { user_id, week_start, week_end } = req.query;

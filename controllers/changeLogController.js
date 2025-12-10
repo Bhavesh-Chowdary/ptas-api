@@ -1,6 +1,5 @@
 import pool from '../config/db.js';
 
-// Internal helper to insert a log
 export const logChange = async (entity_type, entity_id, action, beforeData, afterData, user_id) => {
   try {
     await pool.query(
@@ -13,7 +12,6 @@ export const logChange = async (entity_type, entity_id, action, beforeData, afte
   }
 };
 
-// Fetch logs (optionally filtered)
 export const getChangeLogs = async (req, res) => {
   try {
     const { entity_type, entity_id } = req.query;

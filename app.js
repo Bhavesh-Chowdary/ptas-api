@@ -11,6 +11,7 @@ import sprintRoutes from './routes/sprintRoutes.js';
 import timesheetRoutes from './routes/timesheetRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import changeLogRoutes from './routes/changeLogRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 
 dotenv.config();
 
@@ -20,14 +21,15 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/tasks', taskRoutes);
-app.use('/api/modules', moduleRoutes);
-app.use('/api/sprints', sprintRoutes);
+app.use('/api/auth', authRoutes);//
+app.use('/api/projects', projectRoutes);//
+app.use('/api/tasks', taskRoutes);//
+app.use('/api/modules', moduleRoutes);//
+app.use('/api/sprints', sprintRoutes);//
 app.use('/api/timesheets', timesheetRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/change-logs', changeLogRoutes);
+app.use('/api/users', userRoutes);//
 
 // Health check
 app.get('/health', async (req, res) => {

@@ -1,6 +1,5 @@
 import pool from '../config/db.js';
 
-// Create Sprint
 export const createSprint = async (req, res) => {
   try {
     const { project_id, name, start_date, end_date, status, notes } = req.body;
@@ -20,7 +19,6 @@ export const createSprint = async (req, res) => {
   }
 };
 
-// Get all sprints (optional filter by project)
 export const getSprints = async (req, res) => {
   try {
     const { project_id } = req.query;
@@ -43,7 +41,6 @@ export const getSprints = async (req, res) => {
   }
 };
 
-// Get sprint by ID
 export const getSprintById = async (req, res) => {
   try {
     const { id } = req.query;
@@ -62,7 +59,6 @@ export const getSprintById = async (req, res) => {
 
 import { logChange } from './changeLogController.js';
 
-// Update sprint (with change logging)
 export const updateSprint = async (req, res) => {
   try {
     const { id } = req.query;
@@ -91,7 +87,6 @@ export const updateSprint = async (req, res) => {
   }
 };
 
-// Delete sprint
 export const deleteSprint = async (req, res) => {
   try {
     const { id } = req.query;

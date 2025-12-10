@@ -1,9 +1,5 @@
 import pool from '../config/db.js';
 
-/**
- * Project Overview Report
- * Shows all projects with task count, sprint count, and completion percentage
- */
 export const getProjectOverview = async (req, res) => {
   try {
     const q = `
@@ -30,10 +26,6 @@ export const getProjectOverview = async (req, res) => {
   }
 };
 
-/**
- * Sprint Summary
- * Shows progress for a given sprint
- */
 export const getSprintSummary = async (req, res) => {
   try {
     const { sprint_id } = req.query;
@@ -65,10 +57,6 @@ export const getSprintSummary = async (req, res) => {
   }
 };
 
-/**
- * Resource Allocation Report
- * Shows each user's total logged hours and project distribution
- */
 export const getResourceAllocation = async (req, res) => {
   try {
     const q = `
@@ -91,17 +79,12 @@ export const getResourceAllocation = async (req, res) => {
   }
 };
 
-/**
- * Timesheet Compliance Report
- * Shows percentage of logged vs expected hours per user in a date range
- */
 export const getTimesheetCompliance = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     if (!start_date || !end_date)
       return res.status(400).json({ error: 'start_date and end_date are required' });
 
-    // Assuming 8 hours/day expected × number of weekdays in range
     const q = `
       WITH user_hours AS (
         SELECT 

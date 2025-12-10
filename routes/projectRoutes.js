@@ -13,7 +13,6 @@ import {
 
 const router = express.Router();
 
-// File upload setup
 const upload = multer({ dest: 'uploads/' });
 
 router.use(authMiddleware);
