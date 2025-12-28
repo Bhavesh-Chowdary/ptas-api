@@ -17,11 +17,11 @@ const upload = multer({ dest: 'uploads/' });
 
 router.use(authMiddleware);
 
-router.post('/', permit('admin', 'pm'), upload.single('document'), createProject);
+router.post('/', permit('admin', 'Project Manager'), upload.single('document'), createProject);
 router.get('/', getProjects);
 router.get('/id', getProjectById);
 router.get('/:id/document', downloadDocument);
-router.patch('/id', permit('admin', 'pm'), updateProject);
+router.patch('/id', permit('admin', 'Project Manager'), updateProject);
 router.delete('/id', permit('admin'), deleteProject);
 
 export default router;
