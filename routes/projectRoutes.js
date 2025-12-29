@@ -17,7 +17,7 @@ const upload = multer({ dest: 'uploads/' });
 
 router.use(authMiddleware);
 
-router.post('/', permit('admin', 'Project Manager'), upload.single('document'), createProject);
+router.post("/projects",upload.single("document"),permit('admin', 'Project Manager'),createProject);
 router.get('/', getProjects);
 router.get('/id', getProjectById);
 router.get('/:id/document', downloadDocument);
