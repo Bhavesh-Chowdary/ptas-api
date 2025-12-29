@@ -3,7 +3,7 @@ import pool from "../config/db.js";
 export const createProject = async (req, res) => {
   try {
     const { userId, role } = req.user;
-    if (!["admin", "pm"].includes(role))
+    if (!["admin", "Project Manager"].includes(role))
       return res.status(403).json({ error: "Not allowed" });
 
     const {
