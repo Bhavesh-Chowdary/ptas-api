@@ -1,10 +1,11 @@
 import pool from "../config/db.js";
+import { logChange } from "./changeLogController.js";
+
+/* ================= CREATE PROJECT ================= */
 
 export const createProject = async (req, res) => {
   try {
     const { userId, role } = req.user;
-
-    // normalize role
     const isPM = role === "pm" || role === "Project Manager";
 
     if (!["admin"].includes(role) && !isPM) {
@@ -19,22 +20,30 @@ export const createProject = async (req, res) => {
       status = "active",
     } = req.body;
 
-    const members = req.body.members ? JSON.parse(req.body.members) : [];
-    const modules = req.body.modules ? JSON.parse(req.body.modules) : [];
+    const members =
+      typeof req.body.members === "string"
+        ? JSON.parse(req.body.members)
+        : req.body.members || [];
+
+    const modules =
+      typeof req.body.modules === "string"
+        ? JSON.parse(req.body.modules)
+        : req.body.modules || [];
 
     if (!name) {
       return res.status(400).json({ error: "Project name required" });
     }
 
+    /* ---- PROJECT CODE ---- */
     const base = name.replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase();
     const countRes = await pool.query(
       `SELECT COUNT(*) FROM projects WHERE project_code LIKE $1`,
       [`${base}%`]
     );
-
     const version = Number(countRes.rows[0].count) + 1;
     const projectCode = `${base}-${version}`;
 
+    /* ---- DOCUMENT ---- */
     let document = null;
     let document_name = null;
     let document_type = null;
@@ -45,6 +54,7 @@ export const createProject = async (req, res) => {
       document_type = req.file.mimetype;
     }
 
+    /* ---- CREATE PROJECT ---- */
     const projectRes = await pool.query(
       `
       INSERT INTO projects
@@ -71,24 +81,40 @@ export const createProject = async (req, res) => {
 
     const project = projectRes.rows[0];
 
+    /* ---- MEMBERS ---- */
     for (const uid of members) {
       await pool.query(
-        `INSERT INTO project_members (project_id, user_id)
-         VALUES ($1,$2)
-         ON CONFLICT DO NOTHING`,
+        `
+        INSERT INTO project_members (project_id, user_id)
+        VALUES ($1,$2)
+        ON CONFLICT DO NOTHING
+        `,
         [project.id, uid]
       );
     }
 
+    /* ---- MODULES ---- */
     let serial = 1;
     for (const m of modules) {
       if (!m.name?.trim()) continue;
       await pool.query(
-        `INSERT INTO modules (project_id, name, module_code, module_serial)
-         VALUES ($1,$2,'R',$3)`,
+        `
+        INSERT INTO modules (project_id, name, module_code, module_serial)
+        VALUES ($1,$2,'R',$3)
+        `,
         [project.id, m.name.trim(), serial++]
       );
     }
+
+    /* ---- CHANGE LOG ---- */
+    await logChange(
+      "project",
+      project.id,
+      "created",
+      null,
+      project,
+      userId
+    );
 
     res.status(201).json(project);
   } catch (err) {
@@ -96,6 +122,8 @@ export const createProject = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+/* ================= GET PROJECTS ================= */
 
 export const getProjects = async (req, res) => {
   try {
@@ -105,16 +133,13 @@ export const getProjects = async (req, res) => {
     let query;
     let params = [];
 
-    // Admin & PM → all projects
     if (role === "admin" || isPM) {
       query = `
         SELECT *
         FROM projects
         ORDER BY created_at DESC
       `;
-    }
-    // Dev / QA → only assigned
-    else {
+    } else {
       query = `
         SELECT DISTINCT p.*
         FROM projects p
@@ -133,6 +158,7 @@ export const getProjects = async (req, res) => {
   }
 };
 
+/* ================= GET PROJECT BY ID ================= */
 
 export const getProjectById = async (req, res) => {
   try {
@@ -168,15 +194,16 @@ export const getProjectById = async (req, res) => {
   }
 };
 
-
-
+/* ================= UPDATE PROJECT ================= */
 
 export const updateProject = async (req, res) => {
   try {
     const { id } = req.query;
-    const { role } = req.user;
-    if (!["admin", "Project Manager"].includes(role))
+    const { userId, role } = req.user;
+
+    if (!["admin", "Project Manager"].includes(role)) {
       return res.status(403).json({ error: "Not allowed" });
+    }
 
     const {
       name,
@@ -188,10 +215,17 @@ export const updateProject = async (req, res) => {
       modules = [],
     } = req.body;
 
-    const before = await pool.query(`SELECT * FROM projects WHERE id=$1`, [id]);
-    if (!before.rowCount)
+    /* ---- BEFORE ---- */
+    const beforeRes = await pool.query(
+      `SELECT * FROM projects WHERE id=$1`,
+      [id]
+    );
+    if (!beforeRes.rowCount) {
       return res.status(404).json({ error: "Project not found" });
+    }
+    const before = beforeRes.rows[0];
 
+    /* ---- UPDATE PROJECT ---- */
     const { rows } = await pool.query(
       `
       UPDATE projects
@@ -207,19 +241,19 @@ export const updateProject = async (req, res) => {
       [name, description, start_date, end_date, status, id]
     );
 
-    /* ---- REPLACE MEMBERS ---- */
+    const updated = rows[0];
+
+    /* ---- MEMBERS ---- */
     await pool.query(`DELETE FROM project_members WHERE project_id=$1`, [id]);
     for (const uid of members) {
       await pool.query(
-        `
-        INSERT INTO project_members (project_id,user_id)
-        VALUES ($1,$2)
-        `,
+        `INSERT INTO project_members (project_id,user_id)
+         VALUES ($1,$2)`,
         [id, uid]
       );
     }
 
-    /* ---- OPTIONAL MODULE ADDITIONS ---- */
+    /* ---- MODULES ---- */
     let serialRes = await pool.query(
       `SELECT COALESCE(MAX(module_serial),0) FROM modules WHERE project_id=$1`,
       [id]
@@ -227,7 +261,7 @@ export const updateProject = async (req, res) => {
     let serial = Number(serialRes.rows[0].coalesce) + 1;
 
     for (const m of modules) {
-      if (!m.name || !m.name.trim()) continue;
+      if (!m.name?.trim()) continue;
       await pool.query(
         `
         INSERT INTO modules (project_id,name,module_code,module_serial)
@@ -237,30 +271,79 @@ export const updateProject = async (req, res) => {
       );
     }
 
-    res.json(rows[0]);
+    /* ---- CHANGE LOG ---- */
+    await logChange(
+      "project",
+      id,
+      "updated",
+      before,
+      updated,
+      userId
+    );
+
+    res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+/* ================= DELETE PROJECT ================= */
+
 export const deleteProject = async (req, res) => {
-  const { id } = req.query;
-  await pool.query(`DELETE FROM projects WHERE id=$1`, [id]);
-  res.json({ message: "Deleted" });
+  try {
+    const { id } = req.query;
+    const { userId } = req.user;
+
+    const beforeRes = await pool.query(
+      `SELECT * FROM projects WHERE id=$1`,
+      [id]
+    );
+    if (!beforeRes.rowCount) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    await pool.query(`DELETE FROM projects WHERE id=$1`, [id]);
+
+    /* ---- CHANGE LOG ---- */
+    await logChange(
+      "project",
+      id,
+      "deleted",
+      beforeRes.rows[0],
+      null,
+      userId
+    );
+
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
+
+/* ================= DOWNLOAD DOCUMENT ================= */
 
 export const downloadDocument = async (req, res) => {
   try {
     const { id } = req.params;
-    const q = `SELECT document, document_name, document_type FROM projects WHERE id = $1`;
+    const q = `
+      SELECT document, document_name, document_type
+      FROM projects
+      WHERE id = $1
+    `;
     const result = await pool.query(q, [id]);
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Project not found' });
+
+    if (!result.rowCount)
+      return res.status(404).json({ error: "Project not found" });
 
     const file = result.rows[0];
-    if (!file.document) return res.status(404).json({ error: 'No document uploaded' });
+    if (!file.document)
+      return res.status(404).json({ error: "No document uploaded" });
 
-    res.setHeader('Content-Disposition', `attachment; filename="${file.document_name}"`);
-    res.setHeader('Content-Type', file.document_type);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.document_name}"`
+    );
+    res.setHeader("Content-Type", file.document_type);
     res.send(file.document);
   } catch (err) {
     res.status(500).json({ error: err.message });

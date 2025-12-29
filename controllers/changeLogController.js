@@ -1,25 +1,41 @@
-import pool from '../config/db.js';
+import pool from "../config/db.js";
 
-export const logChange = async (entity_type, entity_id, action, beforeData, afterData, user_id) => {
+/* ================= WRITE LOG ================= */
+
+export const logChange = async (
+  entity_type,
+  entity_id,
+  action,
+  beforeData,
+  afterData,
+  user_id
+) => {
   try {
     await pool.query(
-      `INSERT INTO change_logs (entity_type, entity_id, action, before_data, after_data, changed_by)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+      `
+      INSERT INTO change_logs
+      (entity_type, entity_id, action, before_data, after_data, changed_by)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      `,
       [entity_type, entity_id, action, beforeData, afterData, user_id]
     );
   } catch (err) {
-    console.error('Change log failed:', err.message);
+    console.error("Change log failed:", err.message);
   }
 };
+
+/* ================= READ LOGS ================= */
 
 export const getChangeLogs = async (req, res) => {
   try {
     const { entity_type, entity_id } = req.query;
+
     let q = `
       SELECT c.*, u.full_name AS changed_by_name
       FROM change_logs c
       LEFT JOIN users u ON u.id = c.changed_by
-      WHERE 1=1`;
+      WHERE 1=1
+    `;
     const params = [];
 
     if (entity_type) {
@@ -32,8 +48,9 @@ export const getChangeLogs = async (req, res) => {
     }
 
     q += ` ORDER BY c.changed_at DESC`;
-    const result = await pool.query(q, params);
-    res.json(result.rows);
+
+    const { rows } = await pool.query(q, params);
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

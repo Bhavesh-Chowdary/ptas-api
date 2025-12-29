@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { authMiddleware } from '../middleware/authMiddleware.js';
 import { permit } from '../middleware/roleMiddleware.js';
+import { upload } from '../middleware/upload.js';
 import {
   createProject,
   getProjects,
@@ -12,12 +13,9 @@ import {
 } from '../controllers/projectController.js';
 
 const router = express.Router();
-
-const upload = multer({ dest: 'uploads/' });
-
 router.use(authMiddleware);
 
-router.post("/projects",upload.single("document"),permit('admin', 'Project Manager'),createProject);
+router.post("/",upload.single("document"),permit('admin', 'Project Manager'),createProject);
 router.get('/', getProjects);
 router.get('/id', getProjectById);
 router.get('/:id/document', downloadDocument);
