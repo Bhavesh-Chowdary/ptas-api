@@ -3,8 +3,13 @@ import pool from "../config/db.js";
 export const createProject = async (req, res) => {
   try {
     const { userId, role } = req.user;
-    if (!["admin", "Project Manager"].includes(role))
+
+    // normalize role
+    const isPM = role === "pm" || role === "Project Manager";
+
+    if (!["admin"].includes(role) && !isPM) {
       return res.status(403).json({ error: "Not allowed" });
+    }
 
     const {
       name,
@@ -14,28 +19,22 @@ export const createProject = async (req, res) => {
       status = "active",
     } = req.body;
 
-    // 👇 PARSE JSON STRINGS
-    const members = req.body.members
-      ? JSON.parse(req.body.members)
-      : [];
+    const members = req.body.members ? JSON.parse(req.body.members) : [];
+    const modules = req.body.modules ? JSON.parse(req.body.modules) : [];
 
-    const modules = req.body.modules
-      ? JSON.parse(req.body.modules)
-      : [];
-
-    if (!name)
+    if (!name) {
       return res.status(400).json({ error: "Project name required" });
+    }
 
-    /* ---- PROJECT CODE ---- */
     const base = name.replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase();
     const countRes = await pool.query(
       `SELECT COUNT(*) FROM projects WHERE project_code LIKE $1`,
       [`${base}%`]
     );
+
     const version = Number(countRes.rows[0].count) + 1;
     const projectCode = `${base}-${version}`;
 
-    /* ---- DOCUMENT ---- */
     let document = null;
     let document_name = null;
     let document_type = null;
@@ -46,7 +45,6 @@ export const createProject = async (req, res) => {
       document_type = req.file.mimetype;
     }
 
-    /* ---- CREATE PROJECT ---- */
     const projectRes = await pool.query(
       `
       INSERT INTO projects
@@ -73,25 +71,21 @@ export const createProject = async (req, res) => {
 
     const project = projectRes.rows[0];
 
-    /* ---- MEMBERS ---- */
     for (const uid of members) {
       await pool.query(
-        `INSERT INTO project_members (project_id,user_id)
+        `INSERT INTO project_members (project_id, user_id)
          VALUES ($1,$2)
          ON CONFLICT DO NOTHING`,
         [project.id, uid]
       );
     }
 
-    /* ---- MODULES ---- */
     let serial = 1;
     for (const m of modules) {
       if (!m.name?.trim()) continue;
       await pool.query(
-        `
-        INSERT INTO modules (project_id,name,module_code,module_serial)
-        VALUES ($1,$2,'R',$3)
-        `,
+        `INSERT INTO modules (project_id, name, module_code, module_serial)
+         VALUES ($1,$2,'R',$3)`,
         [project.id, m.name.trim(), serial++]
       );
     }
@@ -105,26 +99,36 @@ export const createProject = async (req, res) => {
 
 export const getProjects = async (req, res) => {
   try {
-    const { id: userId, role } = req.user;
+    const { userId, role } = req.user;
+    const isPM = role === "pm" || role === "Project Manager";
 
-    let query = `
-      SELECT DISTINCT p.*
-      FROM projects p
-      LEFT JOIN project_members pm ON pm.project_id = p.id
-    `;
-
+    let query;
     let params = [];
 
-    if (!["admin", "pm"].includes(role)) {
-      query += ` WHERE pm.user_id = $1 `;
-      params.push(userId);
+    // Admin & PM → all projects
+    if (role === "admin" || isPM) {
+      query = `
+        SELECT *
+        FROM projects
+        ORDER BY created_at DESC
+      `;
     }
-
-    query += ` ORDER BY p.created_at DESC`;
+    // Dev / QA → only assigned
+    else {
+      query = `
+        SELECT DISTINCT p.*
+        FROM projects p
+        INNER JOIN project_members pm ON pm.project_id = p.id
+        WHERE pm.user_id = $1
+        ORDER BY p.created_at DESC
+      `;
+      params = [userId];
+    }
 
     const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (err) {
+    console.error("getProjects error:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -133,20 +137,21 @@ export const getProjects = async (req, res) => {
 export const getProjectById = async (req, res) => {
   try {
     const { id } = req.query;
-    const { id: userId, role } = req.user;
+    const { userId, role } = req.user;
+    const isPM = role === "pm" || role === "Project Manager";
 
-    let query = `
-      SELECT DISTINCT p.*
-      FROM projects p
-      LEFT JOIN project_members pm ON pm.project_id = p.id
-      WHERE p.id = $1
-    `;
+    let query;
+    let params = [id];
 
-    const params = [id];
-
-    // 🔒 Restrict dev / qa
-    if (!["admin", "pm"].includes(role)) {
-      query += ` AND pm.user_id = $2`;
+    if (role === "admin" || isPM) {
+      query = `SELECT * FROM projects WHERE id = $1`;
+    } else {
+      query = `
+        SELECT p.*
+        FROM projects p
+        INNER JOIN project_members pm ON pm.project_id = p.id
+        WHERE p.id = $1 AND pm.user_id = $2
+      `;
       params.push(userId);
     }
 
@@ -158,9 +163,11 @@ export const getProjectById = async (req, res) => {
 
     res.json(rows[0]);
   } catch (err) {
+    console.error("getProjectById error:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 
