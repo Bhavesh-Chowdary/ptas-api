@@ -55,3 +55,36 @@ export const getChangeLogs = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+export const getProjectActivity = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+
+    const { rows } = await pool.query(
+      `
+      SELECT
+        cl.*,
+        u.full_name AS user_name
+      FROM change_logs cl
+      LEFT JOIN users u ON u.id = cl.changed_by
+      WHERE
+        (cl.entity_type = 'project' AND cl.entity_id = $1)
+        OR (
+          cl.entity_type IN ('task','module')
+          AND cl.entity_id IN (
+            SELECT id FROM tasks WHERE project_id=$1
+            UNION
+            SELECT id FROM modules WHERE project_id=$1
+          )
+        )
+      ORDER BY cl.changed_at DESC
+      LIMIT 20
+      `,
+      [projectId]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

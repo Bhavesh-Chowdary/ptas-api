@@ -162,7 +162,7 @@ export const getProjects = async (req, res) => {
 
 export const getProjectById = async (req, res) => {
   try {
-    const { id } = req.query;
+    const { id } = req.params;
     const { userId, role } = req.user;
     const isPM = role === "pm" || role === "Project Manager";
 
@@ -189,10 +189,10 @@ export const getProjectById = async (req, res) => {
 
     res.json(rows[0]);
   } catch (err) {
-    console.error("getProjectById error:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 /* ================= UPDATE PROJECT ================= */
 
@@ -345,6 +345,33 @@ export const downloadDocument = async (req, res) => {
     );
     res.setHeader("Content-Type", file.document_type);
     res.send(file.document);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const getProjectSummary = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [modules, tasks] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM modules WHERE project_id=$1`, [id]),
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status != 'Done') AS active,
+          COUNT(*) AS total
+        FROM tasks
+        WHERE project_id=$1
+      `, [id]),
+    ]);
+
+    res.json({
+      modules: Number(modules.rows[0].count),
+      tasks: {
+        active: Number(tasks.rows[0].active),
+        total: Number(tasks.rows[0].total),
+      },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
