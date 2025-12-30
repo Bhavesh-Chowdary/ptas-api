@@ -1,4 +1,6 @@
 import pool from '../config/db.js';
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
+import { logChange } from './changeLogController.js';
 
 export const createTimesheet = async (req, res) => {
   try {
@@ -6,7 +8,7 @@ export const createTimesheet = async (req, res) => {
     const user_id = req.user.userId;
 
     if (!minutes_logged || minutes_logged <= 0)
-      return res.status(400).json({ error: 'minutes_logged must be greater than 0' });
+      return errorResponse(res, 'minutes_logged must be greater than 0', 400);
 
     const q = `
       INSERT INTO timesheets (user_id, task_id, log_date, minutes_logged, source, notes)
@@ -20,9 +22,11 @@ export const createTimesheet = async (req, res) => {
       notes || null
     ]);
 
-    res.status(201).json(result.rows[0]);
+    /* ---- CLEAR CACHE ---- */
+
+    successResponse(res, result.rows[0], 201);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -33,6 +37,7 @@ export const autoLogTime = async (task_id, user_id, minutes, note) => {
        VALUES ($1, $2, CURRENT_DATE, $3, 'auto', $4)`,
       [user_id, task_id, minutes, note]
     );
+    /* ---- CLEAR CACHE ---- */
   } catch (err) {
     console.error('Auto-log error:', err.message);
   }
@@ -62,13 +67,11 @@ export const getTimesheets = async (req, res) => {
 
     q += ` ORDER BY t.log_date DESC`;
     const result = await pool.query(q, params);
-    res.json(result.rows);
+    successResponse(res, result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
-
-import { logChange } from './changeLogController.js';
 
 // Approve timesheet (with change log)
 export const approveTimesheet = async (req, res) => {
@@ -77,7 +80,7 @@ export const approveTimesheet = async (req, res) => {
     const approved_by = req.user.userId;
 
     const before = await pool.query('SELECT * FROM timesheets WHERE id = $1', [id]);
-    if (before.rowCount === 0) return res.status(404).json({ error: 'Timesheet not found' });
+    if (before.rowCount === 0) return errorResponse(res, 'Timesheet not found', 404);
 
     const q = `
       UPDATE timesheets
@@ -89,9 +92,11 @@ export const approveTimesheet = async (req, res) => {
 
     await logChange('timesheet', id, 'approve', before.rows[0], after, approved_by);
 
-    res.json({ message: 'Timesheet approved successfully', data: after });
+    /* ---- CLEAR CACHE ---- */
+
+    successResponse(res, after);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -102,7 +107,7 @@ export const getWeeklySummary = async (req, res) => {
     const { week_start, week_end } = req.query;
 
     if (!week_start || !week_end)
-      return res.status(400).json({ error: 'week_start and week_end are required' });
+      return errorResponse(res, 'week_start and week_end are required', 400);
 
     const q = `
       SELECT u.full_name,
@@ -115,8 +120,8 @@ export const getWeeklySummary = async (req, res) => {
       ORDER BY total_minutes DESC`;
     const result = await pool.query(q, [week_start, week_end]);
 
-    res.json(result.rows);
+    successResponse(res, result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };

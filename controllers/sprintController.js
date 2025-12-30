@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import { logChange } from "./changeLogController.js";
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 export const createSprint = async (req, res) => {
   try {
@@ -7,13 +8,11 @@ export const createSprint = async (req, res) => {
     const { role, userId } = req.user;
 
     if (!["admin", "Project Manager"].includes(role)) {
-      return res.status(403).json({ error: "Not allowed to create sprint" });
+      return errorResponse(res, "Not allowed to create sprint", 403);
     }
 
     if (!project_id || !start_date || !end_date) {
-      return res.status(400).json({
-        error: "project_id, start_date and end_date are required",
-      });
+      return errorResponse(res, "project_id, start_date and end_date are required", 400);
     }
 
     const count = await pool.query(
@@ -55,10 +54,12 @@ export const createSprint = async (req, res) => {
       );
     }
 
-    res.status(201).json(sprint);
+    /* ---- CHANGE LOG ---- */
+
+    successResponse(res, sprint, 201);
   } catch (err) {
     console.error("createSprint:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -86,19 +87,19 @@ export const getSprints = async (req, res) => {
     q += ` GROUP BY s.id, p.name ORDER BY s.sprint_number DESC`;
 
     const { rows } = await pool.query(q, params);
-    res.json(rows);
+    successResponse(res, rows);
   } catch (err) {
     console.error("getSprints:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
 export const getSprintById = async (req, res) => {
   try {
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
 
     if (!id) {
-      return res.status(400).json({ error: "Sprint id is required" });
+      return errorResponse(res, "Sprint id is required", 400);
     }
 
     const { rows } = await pool.query(
@@ -118,27 +119,27 @@ export const getSprintById = async (req, res) => {
     );
 
     if (!rows.length) {
-      return res.status(404).json({ error: "Sprint not found" });
+      return errorResponse(res, "Sprint not found", 404);
     }
 
-    res.json(rows[0]);
+    successResponse(res, rows[0]);
   } catch (err) {
     console.error("getSprintById:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
 export const updateSprint = async (req, res) => {
   try {
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
     const { role, userId } = req.user;
 
     if (!["admin", "Project Manager"].includes(role)) {
-      return res.status(403).json({ error: "Not allowed to update sprint" });
+      return errorResponse(res, "Not allowed to update sprint", 403);
     }
 
     if (!id) {
-      return res.status(400).json({ error: "Sprint id is required" });
+      return errorResponse(res, "Sprint id is required", 400);
     }
 
     const beforeRes = await pool.query(
@@ -147,7 +148,7 @@ export const updateSprint = async (req, res) => {
     );
 
     if (!beforeRes.rowCount) {
-      return res.status(404).json({ error: "Sprint not found" });
+      return errorResponse(res, "Sprint not found", 404);
     }
 
     const before = beforeRes.rows[0];
@@ -174,24 +175,26 @@ export const updateSprint = async (req, res) => {
 
     await logChange("sprint", id, "update", before, after, userId);
 
-    res.json(after);
+    /* ---- CHANGE LOG ---- */
+
+    successResponse(res, after);
   } catch (err) {
     console.error("updateSprint:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
 export const deleteSprint = async (req, res) => {
   try {
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
     const { role } = req.user;
 
     if (!["admin", "Project Manager"].includes(role)) {
-      return res.status(403).json({ error: "Not allowed to delete sprint" });
+      return errorResponse(res, "Not allowed to delete sprint", 403);
     }
 
     if (!id) {
-      return res.status(400).json({ error: "Sprint id is required" });
+      return errorResponse(res, "Sprint id is required", 400);
     }
 
     const { rowCount } = await pool.query(
@@ -200,12 +203,14 @@ export const deleteSprint = async (req, res) => {
     );
 
     if (!rowCount) {
-      return res.status(404).json({ error: "Sprint not found" });
+      return errorResponse(res, "Sprint not found", 404);
     }
 
-    res.json({ message: "Sprint deleted successfully" });
+    /* ---- CHANGE LOG ---- */
+
+    successResponse(res, { message: "Sprint deleted successfully" });
   } catch (err) {
     console.error("deleteSprint:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };

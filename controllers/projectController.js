@@ -1,15 +1,16 @@
 import pool from "../config/db.js";
 import { logChange } from "./changeLogController.js";
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 /* ================= CREATE PROJECT ================= */
 
 export const createProject = async (req, res) => {
   try {
     const { userId, role } = req.user;
-    const isPM = role === "pm" || role === "Project Manager";
+    const isPM = role === "Project Manager"; // Normalized
 
     if (!["admin"].includes(role) && !isPM) {
-      return res.status(403).json({ error: "Not allowed" });
+      return errorResponse(res, "Not allowed", 403);
     }
 
     const {
@@ -31,7 +32,7 @@ export const createProject = async (req, res) => {
         : req.body.modules || [];
 
     if (!name) {
-      return res.status(400).json({ error: "Project name required" });
+      return errorResponse(res, "Project name required", 400);
     }
 
     /* ---- PROJECT CODE ---- */
@@ -116,10 +117,12 @@ export const createProject = async (req, res) => {
       userId
     );
 
-    res.status(201).json(project);
+    /* ---- CHANGE LOG ---- */
+
+    successResponse(res, project, 201);
   } catch (err) {
     console.error("createProject:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -128,7 +131,7 @@ export const createProject = async (req, res) => {
 export const getProjects = async (req, res) => {
   try {
     const { userId, role } = req.user;
-    const isPM = role === "pm" || role === "Project Manager";
+    const isPM = role === "Project Manager"; // Normalized
 
     let query;
     let params = [];
@@ -159,10 +162,10 @@ export const getProjects = async (req, res) => {
     }
 
     const { rows } = await pool.query(query, params);
-    res.json(rows);
+    successResponse(res, rows);
   } catch (err) {
     console.error("getProjects error:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -172,7 +175,7 @@ export const getProjectById = async (req, res) => {
   try {
     const { id } = req.params;
     const { userId, role } = req.user;
-    const isPM = role === "pm" || role === "Project Manager";
+    const isPM = role === "Project Manager"; // Normalized
 
     let query;
     let params = [id];
@@ -204,12 +207,12 @@ export const getProjectById = async (req, res) => {
     const { rows } = await pool.query(query, params);
 
     if (!rows.length) {
-      return res.status(403).json({ error: "Access denied" });
+      return errorResponse(res, "Access denied", 403);
     }
 
-    res.json(rows[0]);
+    successResponse(res, rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -218,11 +221,11 @@ export const getProjectById = async (req, res) => {
 
 export const updateProject = async (req, res) => {
   try {
-    const { id } = req.query;
+    const { id } = req.params; // Fixed: was req.query
     const { userId, role } = req.user;
 
     if (!["admin", "Project Manager"].includes(role)) {
-      return res.status(403).json({ error: "Not allowed" });
+      return errorResponse(res, "Not allowed", 403);
     }
 
     const {
@@ -241,7 +244,7 @@ export const updateProject = async (req, res) => {
       [id]
     );
     if (!beforeRes.rowCount) {
-      return res.status(404).json({ error: "Project not found" });
+      return errorResponse(res, "Project not found", 404);
     }
     const before = beforeRes.rows[0];
 
@@ -276,6 +279,11 @@ export const updateProject = async (req, res) => {
     /* ---- MODULES (Optimized Batch Insert) ---- */
     const validModules = modules.filter(m => m.name?.trim());
     if (validModules.length > 0) {
+      // NOTE: We probably shouldn't just insert, but manage existing modules. 
+      // But keeping logic similar to before, just optimized.
+      // However, if we simply insert, we might duplicate or lose history if we cleared.
+      // The original code appended. We stick to that.
+
       let serialRes = await pool.query(
         `SELECT COALESCE(MAX(module_serial),0) FROM modules WHERE project_id=$1`,
         [id]
@@ -300,9 +308,9 @@ export const updateProject = async (req, res) => {
       userId
     );
 
-    res.json(updated);
+    successResponse(res, updated);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -310,7 +318,7 @@ export const updateProject = async (req, res) => {
 
 export const deleteProject = async (req, res) => {
   try {
-    const { id } = req.query;
+    const { id } = req.params; // Fixed: was req.query
     const { userId } = req.user;
 
     const beforeRes = await pool.query(
@@ -318,7 +326,7 @@ export const deleteProject = async (req, res) => {
       [id]
     );
     if (!beforeRes.rowCount) {
-      return res.status(404).json({ error: "Project not found" });
+      return errorResponse(res, "Project not found", 404);
     }
 
     await pool.query(`DELETE FROM projects WHERE id=$1`, [id]);
@@ -333,9 +341,9 @@ export const deleteProject = async (req, res) => {
       userId
     );
 
-    res.json({ message: "Deleted" });
+    successResponse(res, { message: "Deleted" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -352,20 +360,20 @@ export const downloadDocument = async (req, res) => {
     const result = await pool.query(q, [id]);
 
     if (!result.rowCount)
-      return res.status(404).json({ error: "Project not found" });
+      return errorResponse(res, "Project not found", 404);
 
     const file = result.rows[0];
     if (!file.document)
-      return res.status(404).json({ error: "No document uploaded" });
+      return errorResponse(res, "No document uploaded", 404);
 
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="${file.document_name}"`
     );
-    res.setHeader("Content-Type", file.document_type);
+    res.setHeader("Content-Type", file.document_type || 'application/octet-stream');
     res.send(file.document);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -377,14 +385,14 @@ export const getProjectSummary = async (req, res) => {
       pool.query(`SELECT COUNT(*) FROM modules WHERE project_id=$1`, [id]),
       pool.query(`
         SELECT
-          COUNT(*) FILTER (WHERE status != 'Done') AS active,
+          COUNT(*) FILTER (WHERE status != 'done') AS active,
           COUNT(*) AS total
         FROM tasks
         WHERE project_id=$1
       `, [id]),
     ]);
 
-    res.json({
+    successResponse(res, {
       modules: Number(modules.rows[0].count),
       tasks: {
         active: Number(tasks.rows[0].active),
@@ -392,37 +400,41 @@ export const getProjectSummary = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
 // projectController.js
 export const getMyProjects = async (req, res) => {
-  const { userId, role } = req.user;
+  try {
+    const { userId, role } = req.user;
 
-  let q = `
-    SELECT p.*,
-      COUNT(t.id) as total_tasks,
-      COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
-    FROM projects p
-    LEFT JOIN project_members pm ON pm.project_id = p.id
-    LEFT JOIN tasks t ON t.project_id = p.id
-  `;
+    let q = `
+      SELECT p.*,
+        COUNT(t.id) as total_tasks,
+        COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+      FROM projects p
+      LEFT JOIN project_members pm ON pm.project_id = p.id
+      LEFT JOIN tasks t ON t.project_id = p.id
+    `;
 
-  const params = [];
+    const params = [];
 
-  if (role === "Project Manager" || role === "pm") {
-    q += " WHERE p.manager_id = $1";
-    params.push(userId);
-  } else {
-    q += " WHERE pm.user_id = $1";
-    params.push(userId);
+    if (role === "Project Manager") {
+      q += " WHERE p.manager_id = $1";
+      params.push(userId);
+    } else {
+      q += " WHERE pm.user_id = $1";
+      params.push(userId);
+    }
+
+    q += " GROUP BY p.id";
+
+    const { rows } = await pool.query(q, params);
+    successResponse(res, rows);
+  } catch (err) {
+    errorResponse(res, err.message);
   }
-
-  q += " GROUP BY p.id";
-
-  const { rows } = await pool.query(q, params);
-  res.json(rows);
 };
 
 /* ================= GET PROJECT MEMBERS ================= */
@@ -441,9 +453,9 @@ export const getProjectMembers = async (req, res) => {
       [id]
     );
 
-    res.json(rows);
+    successResponse(res, rows);
   } catch (err) {
     console.error("getProjectMembers:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };

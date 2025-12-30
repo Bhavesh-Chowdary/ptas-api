@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 /* ================= WRITE LOG ================= */
 
@@ -50,15 +51,15 @@ export const getChangeLogs = async (req, res) => {
     q += ` ORDER BY c.changed_at DESC`;
 
     const { rows } = await pool.query(q, params);
-    res.json(rows);
+    successResponse(res, rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
 export const getProjectActivity = async (req, res) => {
   try {
-    const { projectId } = req.params;
+    const { id } = req.params; // Standardized to 'id' to match projectRoutes.js /:id/activity
 
     const { rows } = await pool.query(
       `
@@ -80,11 +81,11 @@ export const getProjectActivity = async (req, res) => {
       ORDER BY cl.changed_at DESC
       LIMIT 20
       `,
-      [projectId]
+      [id]
     );
 
-    res.json(rows);
+    successResponse(res, rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };

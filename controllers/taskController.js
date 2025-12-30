@@ -1,22 +1,14 @@
 import pool from "../config/db.js";
 import { autoLogTime } from "./timesheetController.js";
 import { logChange } from "./changeLogController.js";
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
-const toDbStatus = (ui) => ({
-  "To Do": "todo",
-  "In Progress": "in_progress",
-  "Review": "review",
-  "Done": "done",
-  "Blocked": "blocked",
-}[ui] || ui);
+// Helper to extract ID from user object if needed
+const getUserId = (user) => (typeof user === 'object' ? user.id : user);
 
-const toUiStatus = (db) => ({
-  "todo": "To Do",
-  "in_progress": "In Progress",
-  "review": "Review",
-  "done": "Done",
-  "blocked": "Blocked",
-}[db] || db);
+// Statuses should be handled as snake_case directly from DB/UI
+// Keeping this for reference if needed, but removing active usage
+const ALLOWED_STATUSES = ["todo", "in_progress", "review", "done", "blocked"];
 
 /*
   TASK CODE GENERATOR
@@ -107,10 +99,10 @@ export const createTask = async (req, res) => {
         description || null,
         sprint_id,
         module_id,
-        assignee_id,
+        getUserId(assignee_id),
         userId,
         est_hours || null,
-        status ? toDbStatus(status) : 'todo',
+        status || 'todo',
       ]
     );
 
@@ -124,10 +116,24 @@ export const createTask = async (req, res) => {
       userId
     );
 
-    res.status(201).json(rows[0]);
+    /* ---- COLLABORATORS ---- */
+    const { collaborators } = req.body;
+    if (Array.isArray(collaborators)) {
+      for (const item of collaborators) {
+        const uid = getUserId(item);
+        if (!uid) continue;
+        await pool.query(
+          `INSERT INTO task_collaborators (task_id, user_id)
+           VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [rows[0].id, uid]
+        );
+      }
+    }
+
+    successResponse(res, rows[0], 201);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -193,15 +199,12 @@ export const getTasks = async (req, res) => {
 
     const { rows } = await pool.query(query, params);
 
-    const mapped = rows.map(t => ({
-      ...t,
-      status: toUiStatus(t.status)
-    }));
+    const mapped = rows; // Return rows directly, status is already snake_case
 
-    res.json(mapped);
+    successResponse(res, rows);
   } catch (err) {
     console.error("getTasks:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -213,7 +216,7 @@ export const getTaskById = async (req, res) => {
     const id = req.params.id || req.query.id;
 
     if (!id) {
-      return res.status(400).json({ error: "Task id is required" });
+      return errorResponse(res, "Task id is required", 400);
     }
 
     const q = `
@@ -225,13 +228,13 @@ export const getTaskById = async (req, res) => {
 
     const { rows } = await pool.query(q, [id]);
     if (!rows.length) {
-      return res.status(404).json({ error: "Task not found" });
+      return errorResponse(res, "Task not found", 404);
     }
 
-    res.json(rows[0]);
+    successResponse(res, rows[0]);
   } catch (err) {
     console.error("getTaskById:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -244,7 +247,7 @@ export const updateTask = async (req, res) => {
     const { role, userId } = req.user;
 
     if (!id) {
-      return res.status(400).json({ error: "Task id is required" });
+      return errorResponse(res, "Task id is required", 400);
     }
 
     const beforeRes = await pool.query(
@@ -252,19 +255,19 @@ export const updateTask = async (req, res) => {
       [id]
     );
     if (!beforeRes.rowCount) {
-      return res.status(404).json({ error: "Task not found" });
+      return errorResponse(res, "Task not found", 404);
     }
 
     const before = beforeRes.rows[0];
 
     if (role === "developer" && before.assignee_id !== userId) {
-      return res.status(403).json({ error: "Not allowed to edit this task" });
+      return errorResponse(res, "Not allowed to edit this task", 403);
     }
 
     const {
       title,
       description,
-      module_name,
+      module_id,
       assignee_id,
       status,
       start_datetime,
@@ -279,7 +282,7 @@ export const updateTask = async (req, res) => {
       SET
         title = COALESCE($1, title),
         description = COALESCE($2, description),
-        module_name = COALESCE($3, module_name),
+        module_id = COALESCE($3, module_id),
         assignee_id = COALESCE($4, assignee_id),
         status = COALESCE($5, status),
         start_datetime = COALESCE($6, start_datetime),
@@ -294,9 +297,9 @@ export const updateTask = async (req, res) => {
     const { rows } = await pool.query(updateQ, [
       title,
       description,
-      module_name,
-      assignee_id,
-      status ? toDbStatus(status) : undefined,
+      module_id,
+      getUserId(assignee_id),
+      status || null,
       start_datetime,
       end_datetime,
       est_hours,
@@ -310,10 +313,12 @@ export const updateTask = async (req, res) => {
       await pool.query("DELETE FROM task_collaborators WHERE task_id = $1", [
         id,
       ]);
-      for (const uid of collaborators) {
+      for (const item of collaborators) {
+        const uid = getUserId(item);
+        if (!uid) continue;
         await pool.query(
           `INSERT INTO task_collaborators (task_id, user_id)
-           VALUES ($1,$2)`,
+           VALUES ($1,$2) ON CONFLICT DO NOTHING`,
           [id, uid]
         );
       }
@@ -322,17 +327,17 @@ export const updateTask = async (req, res) => {
     /* ---- CHANGE LOG ---- */
     await logChange("task", id, "updated", before, after, userId);
 
-    if (status === "In Progress") {
+    if (status === "in_progress") {
       await autoLogTime(id, userId, 30, "Auto-log: Task started");
     }
-    if (status === "Done") {
+    if (status === "done") {
       await autoLogTime(id, userId, 60, "Auto-log: Task completed");
     }
 
-    res.json(after);
+    successResponse(res, after);
   } catch (err) {
     console.error("updateTask:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -345,11 +350,11 @@ export const deleteTask = async (req, res) => {
     const { role, userId } = req.user;
 
     if (!id) {
-      return res.status(400).json({ error: "Task id is required" });
+      return errorResponse(res, "Task id is required", 400);
     }
 
     if (!["admin", "Project Manager", "developer"].includes(role)) {
-      return res.status(403).json({ error: "Not allowed to delete tasks" });
+      return errorResponse(res, "Not allowed to delete tasks", 403);
     }
 
     /* ---- BEFORE ---- */
@@ -358,7 +363,7 @@ export const deleteTask = async (req, res) => {
       [id]
     );
     if (!beforeRes.rowCount) {
-      return res.status(404).json({ error: "Task not found" });
+      return errorResponse(res, "Task not found", 404);
     }
 
     await pool.query("DELETE FROM tasks WHERE id = $1", [id]);
@@ -373,9 +378,9 @@ export const deleteTask = async (req, res) => {
       userId
     );
 
-    res.json({ message: "Task deleted successfully" });
+    successResponse(res, { message: "Task deleted successfully" });
   } catch (err) {
     console.error("deleteTask:", err);
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };

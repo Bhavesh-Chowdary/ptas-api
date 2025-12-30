@@ -21,13 +21,13 @@ router.use(authMiddleware);
 
 router.post("/", upload.single("document"), permit('admin', 'Project Manager'), createProject);
 router.get('/', getProjects);
+router.get("/my", getMyProjects); // Static route BEFORE dynamic /:id
 router.get('/:id', getProjectById);
 router.get('/:id/document', downloadDocument);
-router.patch('/id', permit('admin', 'Project Manager'), updateProject);
-router.delete('/id', permit('admin'), deleteProject);
+router.patch('/:id', permit('admin', 'Project Manager'), updateProject); // Fixed /:id
+router.delete('/:id', permit('admin'), deleteProject); // Fixed /:id
 router.get("/:id/summary", getProjectSummary);
 router.get("/:id/activity", getProjectActivity);
-router.get("/my", getMyProjects);
 router.get("/:id/members", authMiddleware, getProjectMembers);
 
 export default router;

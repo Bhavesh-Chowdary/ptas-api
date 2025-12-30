@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 export const getProjectOverview = async (req, res) => {
   try {
@@ -20,16 +21,16 @@ export const getProjectOverview = async (req, res) => {
       ORDER BY p.created_at DESC;
     `;
     const result = await pool.query(q);
-    res.json(result.rows);
+    successResponse(res, result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
 export const getSprintSummary = async (req, res) => {
   try {
     const { sprint_id } = req.query;
-    if (!sprint_id) return res.status(400).json({ error: 'sprint_id is required' });
+    if (!sprint_id) return errorResponse(res, 'sprint_id is required', 400);
 
     const q = `
       SELECT 
@@ -50,10 +51,10 @@ export const getSprintSummary = async (req, res) => {
       GROUP BY s.id;
     `;
     const result = await pool.query(q, [sprint_id]);
-    if (result.rowCount === 0) return res.status(404).json({ error: 'Sprint not found' });
-    res.json(result.rows[0]);
+    if (result.rowCount === 0) return errorResponse(res, 'Sprint not found', 404);
+    successResponse(res, result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -73,9 +74,9 @@ export const getResourceAllocation = async (req, res) => {
       ORDER BY total_hours DESC;
     `;
     const result = await pool.query(q);
-    res.json(result.rows);
+    successResponse(res, result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -83,7 +84,7 @@ export const getTimesheetCompliance = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
     if (!start_date || !end_date)
-      return res.status(400).json({ error: 'start_date and end_date are required' });
+      return errorResponse(res, 'start_date and end_date are required', 400);
 
     const q = `
       WITH user_hours AS (
@@ -110,8 +111,8 @@ export const getTimesheetCompliance = async (req, res) => {
       ORDER BY compliance_percentage DESC;
     `;
     const result = await pool.query(q, [start_date, end_date]);
-    res.json(result.rows);
+    successResponse(res, result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };

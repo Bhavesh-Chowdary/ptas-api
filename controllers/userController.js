@@ -1,13 +1,17 @@
 import pool from '../config/db.js';
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
+
 export const getUsers = async (req, res) => {
   try {
     let q = `
-      SELECT * FROM users WHERE  
+      SELECT id, full_name, email, role, is_active, created_at
+      FROM users
+      ORDER BY full_name
     `;
     const result = await pool.query(q);
-    res.json(result.rows);
+    successResponse(res, result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -21,8 +25,8 @@ export const getAssignableUsers = async (req, res) => {
       ORDER BY full_name
     `;
     const { rows } = await pool.query(q);
-    res.json(rows);
+    successResponse(res, rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };

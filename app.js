@@ -35,9 +35,15 @@ app.use('/api/users', userRoutes);//
 app.get('/health', async (req, res) => {
   try {
     const r = await pool.query('SELECT NOW()');
-    res.json({ status: 'ok', db_time: r.rows[0].now });
+    res.json({
+      success: true,
+      data: { status: 'ok', db_time: r.rows[0].now }
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 });
 

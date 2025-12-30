@@ -10,6 +10,11 @@ export const authMiddleware = async (req, res, next) => {
     const payload = await verifyAccessToken(token);
 
     req.user = payload; // { userId, email, role }
+
+    // Normalize Role Immediately
+    if (req.user.role === 'pm') req.user.role = 'Project Manager';
+    if (req.user.role === 'administrator') req.user.role = 'admin';
+
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Unauthorized or expired token' });

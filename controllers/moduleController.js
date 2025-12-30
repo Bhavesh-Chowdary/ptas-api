@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import { logChange } from "./changeLogController.js";
+import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 const allowed = (role) => ["admin", "Project Manager"].includes(role);
 
@@ -16,9 +17,9 @@ export const getModules = async (req, res) => {
       `,
       [project_id || null]
     );
-    res.json(rows);
+    successResponse(res, rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -28,11 +29,11 @@ export const createModule = async (req, res) => {
   try {
     const { role, userId } = req.user;
     if (!allowed(role))
-      return res.status(403).json({ error: "Locked" });
+      return errorResponse(res, "Locked", 403);
 
     const { project_id, name } = req.body;
     if (!project_id || !name || !name.trim())
-      return res.status(400).json({ error: "Invalid module" });
+      return errorResponse(res, "Invalid module", 400);
 
     const count = await pool.query(
       `SELECT COUNT(*) FROM modules WHERE project_id=$1`,
@@ -60,9 +61,11 @@ export const createModule = async (req, res) => {
       userId
     );
 
-    res.status(201).json(rows[0]);
+    /* ---- CHANGE LOG ---- */
+
+    successResponse(res, rows[0], 201);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -72,13 +75,13 @@ export const updateModule = async (req, res) => {
   try {
     const { role, userId } = req.user;
     if (!allowed(role))
-      return res.status(403).json({ error: "Locked" });
+      return errorResponse(res, "Locked", 403);
 
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
     const { name } = req.body;
 
     if (!name || !name.trim())
-      return res.status(400).json({ error: "Invalid name" });
+      return errorResponse(res, "Invalid name", 400);
 
     /* ---- BEFORE ---- */
     const beforeRes = await pool.query(
@@ -86,7 +89,7 @@ export const updateModule = async (req, res) => {
       [id]
     );
     if (!beforeRes.rowCount)
-      return res.status(404).json({ error: "Module not found" });
+      return errorResponse(res, "Module not found", 404);
 
     const { rows } = await pool.query(
       `
@@ -108,9 +111,11 @@ export const updateModule = async (req, res) => {
       userId
     );
 
-    res.json(rows[0]);
+    /* ---- CHANGE LOG ---- */
+
+    successResponse(res, rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -120,9 +125,9 @@ export const deleteModule = async (req, res) => {
   try {
     const { role, userId } = req.user;
     if (!allowed(role))
-      return res.status(403).json({ error: "Locked" });
+      return errorResponse(res, "Locked", 403);
 
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
 
     /* ---- BEFORE ---- */
     const beforeRes = await pool.query(
@@ -130,7 +135,7 @@ export const deleteModule = async (req, res) => {
       [id]
     );
     if (!beforeRes.rowCount)
-      return res.status(404).json({ error: "Module not found" });
+      return errorResponse(res, "Module not found", 404);
 
     await pool.query(`DELETE FROM modules WHERE id=$1`, [id]);
 
@@ -144,9 +149,11 @@ export const deleteModule = async (req, res) => {
       userId
     );
 
-    res.json({ message: "Deleted" });
+    /* ---- CHANGE LOG ---- */
+
+    successResponse(res, { message: "Deleted" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
 
@@ -154,7 +161,7 @@ export const deleteModule = async (req, res) => {
 
 export const getModuleById = async (req, res) => {
   try {
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
     const q = `
       SELECT m.*, p.name AS project_name
       FROM modules m
@@ -164,10 +171,10 @@ export const getModuleById = async (req, res) => {
     const result = await pool.query(q, [id]);
 
     if (result.rowCount === 0)
-      return res.status(404).json({ error: "Module not found" });
+      return errorResponse(res, "Module not found", 404);
 
-    res.json(result.rows[0]);
+    successResponse(res, result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    errorResponse(res, err.message);
   }
 };
