@@ -14,7 +14,7 @@ router.use(authMiddleware);
 
 router.post('/', createTimesheet); // employee
 router.get('/', getTimesheets); // employee/pm
-router.patch('/:id/approve', permit('pm', 'admin'), approveTimesheet); // pm/admin
-router.get('/summary/weekly', permit('pm', 'admin'), getWeeklySummary); // pm/admin
+router.patch('/:id/approve', permit('Project Manager', 'admin'), approveTimesheet); 
+router.get('/summary/weekly', permit('Project Manager', 'admin'), getWeeklySummary); 
 
 export default router;

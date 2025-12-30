@@ -59,9 +59,9 @@ export const createProject = async (req, res) => {
       `
       INSERT INTO projects
       (name, description, start_date, end_date, status,
-       created_by, project_code, version,
+       created_by, manager_id, project_code, version,
        document, document_name, document_type)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11)
       RETURNING *
       `,
       [
@@ -135,16 +135,24 @@ export const getProjects = async (req, res) => {
 
     if (role === "admin" || isPM) {
       query = `
-        SELECT *
-        FROM projects
-        ORDER BY created_at DESC
+        SELECT p.*,
+          COUNT(t.id) as total_tasks,
+          COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+        FROM projects p
+        LEFT JOIN tasks t ON t.project_id = p.id
+        GROUP BY p.id
+        ORDER BY p.created_at DESC
       `;
     } else {
       query = `
-        SELECT DISTINCT p.*
+        SELECT p.*,
+          COUNT(t.id) as total_tasks,
+          COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
         FROM projects p
         INNER JOIN project_members pm ON pm.project_id = p.id
+        LEFT JOIN tasks t ON t.project_id = p.id
         WHERE pm.user_id = $1
+        GROUP BY p.id
         ORDER BY p.created_at DESC
       `;
       params = [userId];
@@ -170,13 +178,25 @@ export const getProjectById = async (req, res) => {
     let params = [id];
 
     if (role === "admin" || isPM) {
-      query = `SELECT * FROM projects WHERE id = $1`;
+      query = `
+        SELECT p.*,
+          COUNT(t.id) as total_tasks,
+          COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+        FROM projects p
+        LEFT JOIN tasks t ON t.project_id = p.id
+        WHERE p.id = $1
+        GROUP BY p.id
+      `;
     } else {
       query = `
-        SELECT p.*
+        SELECT p.*,
+          COUNT(t.id) as total_tasks,
+          COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
         FROM projects p
         INNER JOIN project_members pm ON pm.project_id = p.id
+        LEFT JOIN tasks t ON t.project_id = p.id
         WHERE p.id = $1 AND pm.user_id = $2
+        GROUP BY p.id
       `;
       params.push(userId);
     }
@@ -243,31 +263,30 @@ export const updateProject = async (req, res) => {
 
     const updated = rows[0];
 
-    /* ---- MEMBERS ---- */
+    /* ---- MEMBERS (Optimized Batch Insert) ---- */
     await pool.query(`DELETE FROM project_members WHERE project_id=$1`, [id]);
-    for (const uid of members) {
+    if (members.length > 0) {
+      const values = members.map((_, i) => `($1, $${i + 2})`).join(",");
       await pool.query(
-        `INSERT INTO project_members (project_id,user_id)
-         VALUES ($1,$2)`,
-        [id, uid]
+        `INSERT INTO project_members (project_id, user_id) VALUES ${values}`,
+        [id, ...members]
       );
     }
 
-    /* ---- MODULES ---- */
-    let serialRes = await pool.query(
-      `SELECT COALESCE(MAX(module_serial),0) FROM modules WHERE project_id=$1`,
-      [id]
-    );
-    let serial = Number(serialRes.rows[0].coalesce) + 1;
+    /* ---- MODULES (Optimized Batch Insert) ---- */
+    const validModules = modules.filter(m => m.name?.trim());
+    if (validModules.length > 0) {
+      let serialRes = await pool.query(
+        `SELECT COALESCE(MAX(module_serial),0) FROM modules WHERE project_id=$1`,
+        [id]
+      );
+      let serial = Number(serialRes.rows[0].coalesce) + 1;
 
-    for (const m of modules) {
-      if (!m.name?.trim()) continue;
+      const values = validModules.map((_, i) => `($1, $${i * 2 + 2}, 'R', $${i * 2 + 3})`).join(",");
+      const flatParams = validModules.flatMap(m => [m.name.trim(), serial++]);
       await pool.query(
-        `
-        INSERT INTO modules (project_id,name,module_code,module_serial)
-        VALUES ($1,$2,'R',$3)
-        `,
-        [id, m.name.trim(), serial++]
+        `INSERT INTO modules (project_id, name, module_code, module_serial) VALUES ${values}`,
+        [id, ...flatParams]
       );
     }
 
@@ -373,6 +392,58 @@ export const getProjectSummary = async (req, res) => {
       },
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// projectController.js
+export const getMyProjects = async (req, res) => {
+  const { userId, role } = req.user;
+
+  let q = `
+    SELECT p.*,
+      COUNT(t.id) as total_tasks,
+      COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+    FROM projects p
+    LEFT JOIN project_members pm ON pm.project_id = p.id
+    LEFT JOIN tasks t ON t.project_id = p.id
+  `;
+
+  const params = [];
+
+  if (role === "Project Manager" || role === "pm") {
+    q += " WHERE p.manager_id = $1";
+    params.push(userId);
+  } else {
+    q += " WHERE pm.user_id = $1";
+    params.push(userId);
+  }
+
+  q += " GROUP BY p.id";
+
+  const { rows } = await pool.query(q, params);
+  res.json(rows);
+};
+
+/* ================= GET PROJECT MEMBERS ================= */
+export const getProjectMembers = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows } = await pool.query(
+      `
+      SELECT u.id, u.full_name, u.role
+      FROM project_members pm
+      JOIN users u ON u.id = pm.user_id
+      WHERE pm.project_id = $1
+      ORDER BY u.full_name
+      `,
+      [id]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("getProjectMembers:", err);
     res.status(500).json({ error: err.message });
   }
 };

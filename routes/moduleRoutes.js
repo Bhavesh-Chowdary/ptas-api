@@ -13,10 +13,9 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-router.post('/', permit('admin', 'pm'), createModule);
+router.post('/', permit('admin', 'Project Manager'), createModule);
 router.get('/', getModules);
 router.get('/id', getModuleById);
-router.patch('/id', permit('admin', 'pm'), updateModule);
-router.delete('/id', permit('admin', 'pm'), deleteModule);
-
+router.patch('/id', permit('admin', 'Project Manager'), updateModule);
+router.delete('/id', permit('admin', 'Project Manager'), deleteModule);
 export default router;

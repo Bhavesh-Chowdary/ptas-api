@@ -3,10 +3,10 @@ import { logChange } from "./changeLogController.js";
 
 export const createSprint = async (req, res) => {
   try {
-    const { project_id, start_date, end_date, notes } = req.body;
+    const { project_id, start_date, end_date, notes, modules } = req.body;
     const { role, userId } = req.user;
 
-    if (!["ADMIN", "PROJECT_MANAGER"].includes(role)) {
+    if (!["admin", "Project Manager"].includes(role)) {
       return res.status(403).json({ error: "Not allowed to create sprint" });
     }
 
@@ -40,7 +40,22 @@ export const createSprint = async (req, res) => {
       ]
     );
 
-    res.status(201).json(rows[0]);
+    const sprint = rows[0];
+
+    // Handle module associations (Optimized Batch Insert)
+    if (Array.isArray(modules) && modules.length > 0) {
+      const values = modules.map((_, i) => `($1, $${i + 2})`).join(",");
+      await pool.query(
+        `
+        INSERT INTO sprint_modules (sprint_id, module_id)
+        VALUES ${values}
+        ON CONFLICT DO NOTHING
+        `,
+        [sprint.id, ...modules]
+      );
+    }
+
+    res.status(201).json(sprint);
   } catch (err) {
     console.error("createSprint:", err);
     res.status(500).json({ error: err.message });
@@ -54,9 +69,12 @@ export const getSprints = async (req, res) => {
     let q = `
       SELECT
         s.*,
-        p.name AS project_name
+        p.name AS project_name,
+        COUNT(t.id) as total_tasks,
+        COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
       FROM sprints s
       LEFT JOIN projects p ON p.id = s.project_id
+      LEFT JOIN tasks t ON t.sprint_id = s.id
     `;
     const params = [];
 
@@ -65,7 +83,7 @@ export const getSprints = async (req, res) => {
       q += ` WHERE s.project_id = $1`;
     }
 
-    q += ` ORDER BY s.sprint_number DESC`;
+    q += ` GROUP BY s.id, p.name ORDER BY s.sprint_number DESC`;
 
     const { rows } = await pool.query(q, params);
     res.json(rows);
@@ -87,10 +105,14 @@ export const getSprintById = async (req, res) => {
       `
       SELECT
         s.*,
-        p.name AS project_name
+        p.name AS project_name,
+        COUNT(t.id) as total_tasks,
+        COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
       FROM sprints s
       LEFT JOIN projects p ON p.id = s.project_id
+      LEFT JOIN tasks t ON t.sprint_id = s.id
       WHERE s.id = $1
+      GROUP BY s.id, p.name
       `,
       [id]
     );
@@ -111,7 +133,7 @@ export const updateSprint = async (req, res) => {
     const { id } = req.query;
     const { role, userId } = req.user;
 
-    if (!["ADMIN", "PROJECT_MANAGER"].includes(role)) {
+    if (!["admin", "Project Manager"].includes(role)) {
       return res.status(403).json({ error: "Not allowed to update sprint" });
     }
 
@@ -164,7 +186,7 @@ export const deleteSprint = async (req, res) => {
     const { id } = req.query;
     const { role } = req.user;
 
-    if (!["ADMIN", "PROJECT_MANAGER"].includes(role)) {
+    if (!["admin", "Project Manager"].includes(role)) {
       return res.status(403).json({ error: "Not allowed to delete sprint" });
     }
 

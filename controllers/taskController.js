@@ -2,6 +2,22 @@ import pool from "../config/db.js";
 import { autoLogTime } from "./timesheetController.js";
 import { logChange } from "./changeLogController.js";
 
+const toDbStatus = (ui) => ({
+  "To Do": "todo",
+  "In Progress": "in_progress",
+  "Review": "review",
+  "Done": "done",
+  "Blocked": "blocked",
+}[ui] || ui);
+
+const toUiStatus = (db) => ({
+  "todo": "To Do",
+  "in_progress": "In Progress",
+  "review": "Review",
+  "done": "Done",
+  "blocked": "Blocked",
+}[db] || db);
+
 /*
   TASK CODE GENERATOR
 */
@@ -28,11 +44,10 @@ const generateTaskCode = async (
   const serial = Number(c.rows[0].count) + 1;
 
   return (
-    `${p.rows[0].org_code}/` +
-    `${p.rows[0].project_code}${String(p.rows[0].version).padStart(3, "0")}/` +
-    `R${u.rows[0].resource_serial}/` +
-    `S${s.rows[0].sprint_number}/` +
-    `${m.rows[0].module_code}${m.rows[0].module_serial}/` +
+    `${p.rows[0].org_code}-` +
+    `${p.rows[0].project_code}${String(p.rows[0].version).padStart(3, "0")}-` +
+    `S${s.rows[0].sprint_number}-` +
+    `${m.rows[0].module_code}${m.rows[0].module_serial}-` +
     `${String(serial).padStart(3, "0")}`
   );
 };
@@ -50,11 +65,22 @@ export const createTask = async (req, res) => {
       title,
       description,
       est_hours,
+      status,
     } = req.body;
 
     const { userId, role } = req.user;
 
-    if (!["ADMIN", "PROJECT_MANAGER"].includes(role))
+    // Enforce Project Membership
+    const memberCheck = await pool.query(
+      `SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2`,
+      [project_id, userId]
+    );
+
+    if (!memberCheck.rowCount && !["admin", "Project Manager"].includes(role)) {
+      return res.status(403).json({ error: "Not part of this project" });
+    }
+
+    if (!["admin", "Project Manager", "developer", "qa"].includes(role) && !memberCheck.rowCount)
       return res.status(403).json({ error: "Not allowed" });
 
     const task_code = await generateTaskCode(
@@ -67,11 +93,11 @@ export const createTask = async (req, res) => {
     const { rows } = await pool.query(
       `
       INSERT INTO tasks
-      (task_code,task_serial,title,description,project_id,
-       sprint_id,module_id,assignee_id,created_by,est_hours)
-      VALUES ($1,
+      (task_code, task_key, task_serial, title, description, project_id,
+       sprint_id, module_id, assignee_id, created_by, est_hours, status)
+      VALUES ($1, $1,
         (SELECT COUNT(*)+1 FROM tasks WHERE project_id=$2),
-        $3,$4,$2,$5,$6,$7,$8,$9)
+        $3,$4,$2,$5,$6,$7,$8,$9, $10)
       RETURNING *
       `,
       [
@@ -84,6 +110,7 @@ export const createTask = async (req, res) => {
         assignee_id,
         userId,
         est_hours || null,
+        status ? toDbStatus(status) : 'todo',
       ]
     );
 
@@ -109,7 +136,7 @@ export const createTask = async (req, res) => {
 */
 export const getTasks = async (req, res) => {
   try {
-    const { role, id: userId } = req.user;
+    const { role, userId } = req.user;
 
     let query = `
       SELECT
@@ -117,52 +144,61 @@ export const getTasks = async (req, res) => {
         p.name AS project_name,
         u.full_name AS assignee_name,
         c.full_name AS created_by_name,
-        COALESCE(col.collaborators, '[]'::json) AS collaborators
+        (
+          SELECT COALESCE(json_agg(json_build_object('id', uc.id, 'name', uc.full_name)), '[]'::json)
+          FROM task_collaborators tc
+          JOIN users uc ON uc.id = tc.user_id
+          WHERE tc.task_id = t.id
+        ) AS collaborators
       FROM tasks t
       JOIN projects p ON p.id = t.project_id
       LEFT JOIN users u ON u.id = t.assignee_id
       LEFT JOIN users c ON c.id = t.created_by
-      LEFT JOIN (
-        SELECT
-          tc.task_id,
-          json_agg(
-            json_build_object(
-              'id', u.id,
-              'name', u.full_name
-            )
-          ) AS collaborators
-        FROM task_collaborators tc
-        JOIN users u ON u.id = tc.user_id
-        GROUP BY tc.task_id
-      ) col ON col.task_id = t.id
     `;
 
     const params = [];
+    const filters = [];
 
-    if (role === "DEVELOPER") {
-      query += `
-        WHERE t.assignee_id = $1
+    if (role === "DEVELOPER" || role === "developer") {
+      filters.push(`(t.assignee_id = $${params.length + 1}
            OR EXISTS (
              SELECT 1
              FROM task_collaborators tc
              WHERE tc.task_id = t.id
-               AND tc.user_id = $1
-           )
-      `;
+               AND tc.user_id = $${params.length + 1}
+           ))`);
       params.push(userId);
     }
 
-    if (role === "PROJECT_MANAGER") {
-      query += `
-        WHERE p.manager_id = $1
-      `;
+    if (role === "Project Manager" || role === "pm") {
+      filters.push(`p.manager_id = $${params.length + 1}`);
       params.push(userId);
+    }
+
+    const { project_id, sprint_id } = req.query;
+    if (project_id) {
+      filters.push(`t.project_id = $${params.length + 1}`);
+      params.push(project_id);
+    }
+    if (sprint_id) {
+      filters.push(`t.sprint_id = $${params.length + 1}`);
+      params.push(sprint_id);
+    }
+
+    if (filters.length > 0) {
+      query += " WHERE " + filters.join(" AND ");
     }
 
     query += " ORDER BY t.created_at DESC";
 
     const { rows } = await pool.query(query, params);
-    res.json(rows);
+
+    const mapped = rows.map(t => ({
+      ...t,
+      status: toUiStatus(t.status)
+    }));
+
+    res.json(mapped);
   } catch (err) {
     console.error("getTasks:", err);
     res.status(500).json({ error: err.message });
@@ -174,7 +210,7 @@ export const getTasks = async (req, res) => {
 */
 export const getTaskById = async (req, res) => {
   try {
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
 
     if (!id) {
       return res.status(400).json({ error: "Task id is required" });
@@ -204,8 +240,8 @@ export const getTaskById = async (req, res) => {
 */
 export const updateTask = async (req, res) => {
   try {
-    const { id } = req.query;
-    const { role, id: userId } = req.user;
+    const id = req.params.id || req.query.id;
+    const { role, userId } = req.user;
 
     if (!id) {
       return res.status(400).json({ error: "Task id is required" });
@@ -221,7 +257,7 @@ export const updateTask = async (req, res) => {
 
     const before = beforeRes.rows[0];
 
-    if (role === "DEVELOPER" && before.assignee_id !== userId) {
+    if (role === "developer" && before.assignee_id !== userId) {
       return res.status(403).json({ error: "Not allowed to edit this task" });
     }
 
@@ -260,7 +296,7 @@ export const updateTask = async (req, res) => {
       description,
       module_name,
       assignee_id,
-      status,
+      status ? toDbStatus(status) : undefined,
       start_datetime,
       end_datetime,
       est_hours,
@@ -305,14 +341,14 @@ export const updateTask = async (req, res) => {
 */
 export const deleteTask = async (req, res) => {
   try {
-    const { id } = req.query;
+    const id = req.params.id || req.query.id;
     const { role, userId } = req.user;
 
     if (!id) {
       return res.status(400).json({ error: "Task id is required" });
     }
 
-    if (!["ADMIN", "PROJECT_MANAGER"].includes(role)) {
+    if (!["admin", "Project Manager", "developer"].includes(role)) {
       return res.status(403).json({ error: "Not allowed to delete tasks" });
     }
 
