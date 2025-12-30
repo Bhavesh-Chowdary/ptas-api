@@ -12,6 +12,7 @@ import timesheetRoutes from './routes/timesheetRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import changeLogRoutes from './routes/changeLogRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import noteRoutes from './routes/noteRoutes.js';
 
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.use('/api/timesheets', timesheetRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/change-logs', changeLogRoutes);
 app.use('/api/users', userRoutes);//
+app.use('/api/notes', noteRoutes);//
 
 // Health check
 app.get('/health', async (req, res) => {
