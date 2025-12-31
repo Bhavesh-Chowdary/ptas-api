@@ -11,6 +11,7 @@ import sprintRoutes from './routes/sprintRoutes.js';
 import timesheetRoutes from './routes/timesheetRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import changeLogRoutes from './routes/changeLogRoutes.js';
+import dashboardRoutes from './routes/dashboardRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import noteRoutes from './routes/noteRoutes.js';
 
@@ -29,7 +30,9 @@ app.use('/api/modules', moduleRoutes);//
 app.use('/api/sprints', sprintRoutes);//
 app.use('/api/timesheets', timesheetRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/activity', changeLogRoutes);
 app.use('/api/change-logs', changeLogRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);//
 app.use('/api/notes', noteRoutes);//
 

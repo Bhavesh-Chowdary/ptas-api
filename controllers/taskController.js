@@ -277,6 +277,21 @@ export const updateTask = async (req, res) => {
       collaborators,
     } = req.body;
 
+    let in_progress_at = before.in_progress_at;
+    let completed_at = before.completed_at;
+    let duration = before.task_duration_minutes;
+
+    if (status === 'in_progress' && before.status !== 'in_progress' && !in_progress_at) {
+      in_progress_at = new Date();
+    }
+    if (status === 'done' && before.status !== 'done') {
+      completed_at = new Date();
+      if (in_progress_at) {
+        const diff = new Date(completed_at) - new Date(in_progress_at);
+        duration = Math.round(diff / (1000 * 60));
+      }
+    }
+
     const updateQ = `
       UPDATE tasks
       SET
@@ -289,6 +304,9 @@ export const updateTask = async (req, res) => {
         end_datetime = COALESCE($7, end_datetime),
         est_hours = COALESCE($8, est_hours),
         actual_hours = COALESCE($9, actual_hours),
+        in_progress_at = $11,
+        completed_at = $12,
+        task_duration_minutes = $13,
         updated_at = NOW()
       WHERE id = $10
       RETURNING *
@@ -305,6 +323,9 @@ export const updateTask = async (req, res) => {
       est_hours,
       actual_hours,
       id,
+      in_progress_at,
+      completed_at,
+      duration
     ]);
 
     const after = rows[0];
