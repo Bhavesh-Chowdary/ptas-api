@@ -6,10 +6,6 @@ import { successResponse, errorResponse } from "../utils/apiResponse.js";
 // Helper to extract ID from user object if needed
 const getUserId = (user) => (typeof user === 'object' ? user.id : user);
 
-// Statuses should be handled as snake_case directly from DB/UI
-// Keeping this for reference if needed, but removing active usage
-const ALLOWED_STATUSES = ["todo", "in_progress", "review", "done", "blocked"];
-
 /*
   TASK CODE GENERATOR
 */
@@ -19,7 +15,7 @@ const generateTaskCode = async (
   module_id,
   assignee_id
 ) => {
-  const [p, s, m, u, c] = await Promise.all([
+  const [p, s, m, c] = await Promise.all([
     pool.query(
       "SELECT org_code, project_code, version FROM projects WHERE id=$1",
       [project_id]
@@ -29,19 +25,25 @@ const generateTaskCode = async (
       "SELECT module_code, module_serial FROM modules WHERE id=$1",
       [module_id]
     ),
-    pool.query("SELECT resource_serial FROM users WHERE id=$1", [assignee_id]),
     pool.query("SELECT COUNT(*) FROM tasks WHERE project_id=$1", [project_id]),
   ]);
 
+  if (!p.rowCount) throw new Error("Project not found");
+  const proj = p.rows[0];
+  const sprNum = s.rowCount ? s.rows[0].sprint_number : '0';
+  const modCode = m.rowCount ? m.rows[0].module_code : 'R';
+  const modSerial = m.rowCount ? m.rows[0].module_serial : '0';
   const serial = Number(c.rows[0].count) + 1;
 
-  return (
-    `${p.rows[0].org_code}-` +
-    `${p.rows[0].project_code}${String(p.rows[0].version).padStart(3, "0")}-` +
-    `S${s.rows[0].sprint_number}-` +
-    `${m.rows[0].module_code}${m.rows[0].module_serial}-` +
-    `${String(serial).padStart(3, "0")}`
-  );
+  // Format: RS/TEST1/V1/S2/R2/003 (as requested)
+  return [
+    proj.org_code || 'RS',
+    proj.project_code,
+    `V${proj.version}`,
+    `S${sprNum}`,
+    `${modCode}${modSerial}`,
+    String(serial).padStart(3, "0")
+  ].join("/");
 };
 
 /*
@@ -58,6 +60,10 @@ export const createTask = async (req, res) => {
       description,
       est_hours,
       status,
+      priority = "Medium",
+      start_date,
+      end_date,
+      collaborators,
     } = req.body;
 
     const { userId, role } = req.user;
@@ -69,11 +75,8 @@ export const createTask = async (req, res) => {
     );
 
     if (!memberCheck.rowCount && !["admin", "Project Manager"].includes(role)) {
-      return res.status(403).json({ error: "Not part of this project" });
+      return errorResponse(res, "Not part of this project", 403);
     }
-
-    if (!["admin", "Project Manager", "developer", "qa"].includes(role) && !memberCheck.rowCount)
-      return res.status(403).json({ error: "Not allowed" });
 
     const task_code = await generateTaskCode(
       project_id,
@@ -86,10 +89,11 @@ export const createTask = async (req, res) => {
       `
       INSERT INTO tasks
       (task_code, task_key, task_serial, title, description, project_id,
-       sprint_id, module_id, assignee_id, created_by, est_hours, status)
+       sprint_id, module_id, assignee_id, created_by, est_hours, status,
+       priority, start_date, end_date)
       VALUES ($1, $1,
         (SELECT COUNT(*)+1 FROM tasks WHERE project_id=$2),
-        $3,$4,$2,$5,$6,$7,$8,$9, $10)
+        $3,$4,$2,$5,$6,$7,$8,$9, $10, $11, $12, $13)
       RETURNING *
       `,
       [
@@ -103,21 +107,15 @@ export const createTask = async (req, res) => {
         userId,
         est_hours || null,
         status || 'todo',
+        priority,
+        start_date || null,
+        end_date || null,
       ]
     );
 
-    /* ---- CHANGE LOG ---- */
-    await logChange(
-      "task",
-      rows[0].id,
-      "created",
-      null,
-      rows[0],
-      userId
-    );
+    const taskId = rows[0].id;
 
     /* ---- COLLABORATORS ---- */
-    const { collaborators } = req.body;
     if (Array.isArray(collaborators)) {
       for (const item of collaborators) {
         const uid = getUserId(item);
@@ -125,14 +123,42 @@ export const createTask = async (req, res) => {
         await pool.query(
           `INSERT INTO task_collaborators (task_id, user_id)
            VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-          [rows[0].id, uid]
+          [taskId, uid]
         );
       }
     }
 
-    successResponse(res, rows[0], 201);
+    /* ---- RETURN JOINED DATA ---- */
+    const joinedRes = await pool.query(`
+      SELECT
+        t.*,
+        p.name AS project_name,
+        p.color AS project_color,
+        m.name AS module_name,
+        u.full_name AS assignee_name,
+        c.full_name AS created_by_name,
+        (
+          SELECT COALESCE(json_agg(json_build_object('id', uc.id, 'name', uc.full_name)), '[]'::json)
+          FROM task_collaborators tc
+          JOIN users uc ON uc.id = tc.user_id
+          WHERE tc.task_id = t.id
+        ) AS collaborators
+      FROM tasks t
+      JOIN projects p ON p.id = t.project_id
+      LEFT JOIN modules m ON m.id = t.module_id
+      LEFT JOIN users u ON u.id = t.assignee_id
+      LEFT JOIN users c ON c.id = t.created_by
+      WHERE t.id = $1
+    `, [taskId]);
+
+    const finalTask = joinedRes.rows[0];
+
+    /* ---- CHANGE LOG ---- */
+    await logChange("task", taskId, "created", null, finalTask, userId);
+
+    successResponse(res, finalTask, 201);
   } catch (err) {
-    console.error(err);
+    console.error("createTask:", err);
     errorResponse(res, err.message);
   }
 };
@@ -148,6 +174,8 @@ export const getTasks = async (req, res) => {
       SELECT
         t.*,
         p.name AS project_name,
+        p.color AS project_color,
+        m.name AS module_name,
         u.full_name AS assignee_name,
         c.full_name AS created_by_name,
         (
@@ -158,6 +186,7 @@ export const getTasks = async (req, res) => {
         ) AS collaborators
       FROM tasks t
       JOIN projects p ON p.id = t.project_id
+      LEFT JOIN modules m ON m.id = t.module_id
       LEFT JOIN users u ON u.id = t.assignee_id
       LEFT JOIN users c ON c.id = t.created_by
     `;
@@ -165,7 +194,7 @@ export const getTasks = async (req, res) => {
     const params = [];
     const filters = [];
 
-    if (role === "DEVELOPER" || role === "developer") {
+    if (role === "developer" || role === "DEVELOPER") {
       filters.push(`(t.assignee_id = $${params.length + 1}
            OR EXISTS (
              SELECT 1
@@ -198,9 +227,6 @@ export const getTasks = async (req, res) => {
     query += " ORDER BY t.created_at DESC";
 
     const { rows } = await pool.query(query, params);
-
-    const mapped = rows; // Return rows directly, status is already snake_case
-
     successResponse(res, rows);
   } catch (err) {
     console.error("getTasks:", err);
@@ -214,10 +240,7 @@ export const getTasks = async (req, res) => {
 export const getTaskById = async (req, res) => {
   try {
     const id = req.params.id || req.query.id;
-
-    if (!id) {
-      return errorResponse(res, "Task id is required", 400);
-    }
+    if (!id) return errorResponse(res, "Task id is required", 400);
 
     const q = `
       SELECT t.*, p.name AS project_name
@@ -227,13 +250,10 @@ export const getTaskById = async (req, res) => {
     `;
 
     const { rows } = await pool.query(q, [id]);
-    if (!rows.length) {
-      return errorResponse(res, "Task not found", 404);
-    }
+    if (!rows.length) return errorResponse(res, "Task not found", 404);
 
     successResponse(res, rows[0]);
   } catch (err) {
-    console.error("getTaskById:", err);
     errorResponse(res, err.message);
   }
 };
@@ -246,18 +266,10 @@ export const updateTask = async (req, res) => {
     const id = req.params.id || req.query.id;
     const { role, userId } = req.user;
 
-    if (!id) {
-      return errorResponse(res, "Task id is required", 400);
-    }
+    if (!id) return errorResponse(res, "Task id is required", 400);
 
-    const beforeRes = await pool.query(
-      "SELECT * FROM tasks WHERE id = $1",
-      [id]
-    );
-    if (!beforeRes.rowCount) {
-      return errorResponse(res, "Task not found", 404);
-    }
-
+    const beforeRes = await pool.query("SELECT * FROM tasks WHERE id = $1", [id]);
+    if (!beforeRes.rowCount) return errorResponse(res, "Task not found", 404);
     const before = beforeRes.rows[0];
 
     if (role === "developer" && before.assignee_id !== userId) {
@@ -272,9 +284,12 @@ export const updateTask = async (req, res) => {
       status,
       start_datetime,
       end_datetime,
+      start_date,
+      end_date,
       est_hours,
       actual_hours,
       collaborators,
+      priority,
     } = req.body;
 
     let in_progress_at = before.in_progress_at;
@@ -307,12 +322,15 @@ export const updateTask = async (req, res) => {
         in_progress_at = $11,
         completed_at = $12,
         task_duration_minutes = $13,
+        priority = COALESCE($14, priority),
+        start_date = COALESCE($15, start_date),
+        end_date = COALESCE($16, end_date),
         updated_at = NOW()
       WHERE id = $10
       RETURNING *
     `;
 
-    const { rows } = await pool.query(updateQ, [
+    await pool.query(updateQ, [
       title,
       description,
       module_id,
@@ -325,15 +343,14 @@ export const updateTask = async (req, res) => {
       id,
       in_progress_at,
       completed_at,
-      duration
+      duration,
+      priority,
+      start_date,
+      end_date
     ]);
 
-    const after = rows[0];
-
     if (Array.isArray(collaborators)) {
-      await pool.query("DELETE FROM task_collaborators WHERE task_id = $1", [
-        id,
-      ]);
+      await pool.query("DELETE FROM task_collaborators WHERE task_id = $1", [id]);
       for (const item of collaborators) {
         const uid = getUserId(item);
         if (!uid) continue;
@@ -345,17 +362,42 @@ export const updateTask = async (req, res) => {
       }
     }
 
-    /* ---- CHANGE LOG ---- */
-    await logChange("task", id, "updated", before, after, userId);
+    /* ---- RETURN JOINED DATA ---- */
+    const joinedRes = await pool.query(`
+      SELECT
+        t.*,
+        p.name AS project_name,
+        p.color AS project_color,
+        m.name AS module_name,
+        u.full_name AS assignee_name,
+        c.full_name AS created_by_name,
+        (
+          SELECT COALESCE(json_agg(json_build_object('id', uc.id, 'name', uc.full_name)), '[]'::json)
+          FROM task_collaborators tc
+          JOIN users uc ON uc.id = tc.user_id
+          WHERE tc.task_id = t.id
+        ) AS collaborators
+      FROM tasks t
+      JOIN projects p ON p.id = t.project_id
+      LEFT JOIN modules m ON m.id = t.module_id
+      LEFT JOIN users u ON u.id = t.assignee_id
+      LEFT JOIN users c ON c.id = t.created_by
+      WHERE t.id = $1
+    `, [id]);
 
-    if (status === "in_progress") {
+    const updatedTask = joinedRes.rows[0];
+
+    /* ---- CHANGE LOG ---- */
+    await logChange("task", id, "updated", before, updatedTask, userId);
+
+    if (status === "in_progress" && before.status !== "in_progress") {
       await autoLogTime(id, userId, 30, "Auto-log: Task started");
     }
-    if (status === "done") {
+    if (status === "done" && before.status !== "done") {
       await autoLogTime(id, userId, 60, "Auto-log: Task completed");
     }
 
-    successResponse(res, after);
+    successResponse(res, updatedTask);
   } catch (err) {
     console.error("updateTask:", err);
     errorResponse(res, err.message);
@@ -370,38 +412,20 @@ export const deleteTask = async (req, res) => {
     const id = req.params.id || req.query.id;
     const { role, userId } = req.user;
 
-    if (!id) {
-      return errorResponse(res, "Task id is required", 400);
-    }
+    if (!id) return errorResponse(res, "Task id is required", 400);
 
     if (!["admin", "Project Manager", "developer"].includes(role)) {
       return errorResponse(res, "Not allowed to delete tasks", 403);
     }
 
-    /* ---- BEFORE ---- */
-    const beforeRes = await pool.query(
-      "SELECT * FROM tasks WHERE id=$1",
-      [id]
-    );
-    if (!beforeRes.rowCount) {
-      return errorResponse(res, "Task not found", 404);
-    }
+    const beforeRes = await pool.query("SELECT * FROM tasks WHERE id=$1", [id]);
+    if (!beforeRes.rowCount) return errorResponse(res, "Task not found", 404);
 
     await pool.query("DELETE FROM tasks WHERE id = $1", [id]);
-
-    /* ---- CHANGE LOG ---- */
-    await logChange(
-      "task",
-      id,
-      "deleted",
-      beforeRes.rows[0],
-      null,
-      userId
-    );
+    await logChange("task", id, "deleted", beforeRes.rows[0], null, userId);
 
     successResponse(res, { message: "Task deleted successfully" });
   } catch (err) {
-    console.error("deleteTask:", err);
     errorResponse(res, err.message);
   }
 };

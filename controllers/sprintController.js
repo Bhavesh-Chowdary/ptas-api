@@ -71,6 +71,7 @@ export const getSprints = async (req, res) => {
       SELECT
         s.*,
         p.name AS project_name,
+        p.color AS project_color,
         COUNT(t.id) as total_tasks,
         COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
       FROM sprints s
@@ -84,7 +85,7 @@ export const getSprints = async (req, res) => {
       q += ` WHERE s.project_id = $1`;
     }
 
-    q += ` GROUP BY s.id, p.name ORDER BY s.sprint_number DESC`;
+    q += ` GROUP BY s.id, p.name, p.color ORDER BY s.sprint_number DESC`;
 
     const { rows } = await pool.query(q, params);
     successResponse(res, rows);
@@ -107,13 +108,14 @@ export const getSprintById = async (req, res) => {
       SELECT
         s.*,
         p.name AS project_name,
+        p.color AS project_color,
         COUNT(t.id) as total_tasks,
         COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
       FROM sprints s
       LEFT JOIN projects p ON p.id = s.project_id
       LEFT JOIN tasks t ON t.sprint_id = s.id
       WHERE s.id = $1
-      GROUP BY s.id, p.name
+      GROUP BY s.id, p.name, p.color
       `,
       [id]
     );
@@ -211,6 +213,67 @@ export const deleteSprint = async (req, res) => {
     successResponse(res, { message: "Sprint deleted successfully" });
   } catch (err) {
     console.error("deleteSprint:", err);
+    errorResponse(res, err.message);
+  }
+};
+
+export const getSprintHierarchy = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const sprintRes = await pool.query(
+      `SELECT s.*, p.name as project_name, p.color as project_color 
+       FROM sprints s 
+       JOIN projects p ON p.id = s.project_id 
+       WHERE s.id = $1`,
+      [id]
+    );
+    if (!sprintRes.rowCount) return errorResponse(res, "Sprint not found", 404);
+    const sprint = sprintRes.rows[0];
+
+    // Get modules linked via sprint_modules OR tasks
+    const modulesRes = await pool.query(
+      `SELECT DISTINCT m.* 
+       FROM modules m
+       WHERE m.id IN (
+         SELECT module_id FROM sprint_modules WHERE sprint_id = $1
+         UNION
+         SELECT module_id FROM tasks WHERE sprint_id = $1 AND module_id IS NOT NULL
+       )
+       ORDER BY m.module_serial`,
+      [id]
+    );
+    const modules = modulesRes.rows;
+
+    const tasksRes = await pool.query(
+      `SELECT t.*, u.full_name as assignee_name 
+       FROM tasks t
+       LEFT JOIN users u ON u.id = t.assignee_id
+       WHERE t.sprint_id = $1`,
+      [id]
+    );
+    const tasks = tasksRes.rows;
+
+    const hierarchy = modules.map(m => ({
+      ...m,
+      tasks: tasks.filter(t => t.module_id === m.id)
+    }));
+
+    const orphanTasks = tasks.filter(t => !t.module_id);
+    if (orphanTasks.length > 0) {
+      hierarchy.push({
+        id: 'orphans',
+        name: 'General Tasks',
+        tasks: orphanTasks
+      });
+    }
+
+    successResponse(res, {
+      sprint,
+      modules: hierarchy
+    });
+  } catch (err) {
+    console.error("getSprintHierarchy:", err);
     errorResponse(res, err.message);
   }
 };

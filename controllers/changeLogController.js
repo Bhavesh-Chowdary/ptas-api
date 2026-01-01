@@ -106,8 +106,8 @@ export const getProjectActivity = async (req, res) => {
         OR (
           cl.entity_type IN ('task','module', 'sprint')
           AND (
-            cl.before_data->>'project_id' = $1 
-            OR cl.after_data->>'project_id' = $1
+            (cl.before_data->>'project_id')::uuid = $1::uuid
+            OR (cl.after_data->>'project_id')::uuid = $1::uuid
           )
         )
       ORDER BY cl.changed_at DESC

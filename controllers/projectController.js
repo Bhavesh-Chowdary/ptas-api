@@ -19,6 +19,7 @@ export const createProject = async (req, res) => {
       start_date,
       end_date,
       status = "active",
+      color,
     } = req.body;
 
     const members =
@@ -61,8 +62,8 @@ export const createProject = async (req, res) => {
       INSERT INTO projects
       (name, description, start_date, end_date, status,
        created_by, manager_id, project_code, version,
-       document, document_name, document_type)
-      VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11)
+       document, document_name, document_type, color)
+      VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *
       `,
       [
@@ -77,6 +78,7 @@ export const createProject = async (req, res) => {
         document,
         document_name,
         document_type,
+        color || "#4F7DFF",
       ]
     );
 
@@ -116,8 +118,6 @@ export const createProject = async (req, res) => {
       project,
       userId
     );
-
-    /* ---- CHANGE LOG ---- */
 
     successResponse(res, project, 201);
   } catch (err) {
@@ -221,7 +221,7 @@ export const getProjectById = async (req, res) => {
 
 export const updateProject = async (req, res) => {
   try {
-    const { id } = req.params; // Fixed: was req.query
+    const { id } = req.params;
     const { userId, role } = req.user;
 
     if (!["admin", "Project Manager"].includes(role)) {
@@ -234,6 +234,7 @@ export const updateProject = async (req, res) => {
       start_date,
       end_date,
       status,
+      color,
       members = [],
       modules = [],
     } = req.body;
@@ -257,11 +258,12 @@ export const updateProject = async (req, res) => {
           start_date=COALESCE($3,start_date),
           end_date=COALESCE($4,end_date),
           status=COALESCE($5,status),
+          color=COALESCE($6,color),
           updated_at=NOW()
-      WHERE id=$6
+      WHERE id=$7
       RETURNING *
       `,
-      [name, description, start_date, end_date, status, id]
+      [name, description, start_date, end_date, status, color, id]
     );
 
     const updated = rows[0];
@@ -279,11 +281,6 @@ export const updateProject = async (req, res) => {
     /* ---- MODULES (Optimized Batch Insert) ---- */
     const validModules = modules.filter(m => m.name?.trim());
     if (validModules.length > 0) {
-      // NOTE: We probably shouldn't just insert, but manage existing modules. 
-      // But keeping logic similar to before, just optimized.
-      // However, if we simply insert, we might duplicate or lose history if we cleared.
-      // The original code appended. We stick to that.
-
       let serialRes = await pool.query(
         `SELECT COALESCE(MAX(module_serial),0) FROM modules WHERE project_id=$1`,
         [id]
@@ -318,7 +315,7 @@ export const updateProject = async (req, res) => {
 
 export const deleteProject = async (req, res) => {
   try {
-    const { id } = req.params; // Fixed: was req.query
+    const { id } = req.params;
     const { userId } = req.user;
 
     const beforeRes = await pool.query(
@@ -381,30 +378,69 @@ export const getProjectSummary = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [modules, tasks] = await Promise.all([
-      pool.query(`SELECT COUNT(*) FROM modules WHERE project_id=$1`, [id]),
+    const [modules, tasks, sprint] = await Promise.all([
+      pool.query(`
+        SELECT 
+          COUNT(*) as total,
+          COUNT(*) FILTER (
+            WHERE id IN (SELECT module_id FROM tasks WHERE project_id=$1 AND LOWER(status) != 'done')
+          ) as active
+        FROM modules 
+        WHERE project_id=$1
+      `, [id]),
       pool.query(`
         SELECT
-          COUNT(*) FILTER (WHERE status != 'done') AS active,
+          COUNT(*) FILTER (WHERE LOWER(status) != 'done') AS active,
+          COUNT(*) FILTER (WHERE LOWER(status) = 'done') AS completed,
           COUNT(*) AS total
         FROM tasks
         WHERE project_id=$1
       `, [id]),
+      pool.query(`
+        SELECT 
+          s.*,
+          (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id) as total_tasks,
+          (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) = 'done') as completed_tasks
+        FROM sprints s
+        WHERE s.project_id = $1 AND s.status != 'completed'
+        ORDER BY s.start_date ASC
+        LIMIT 1
+      `, [id])
     ]);
 
+    const activeSprint = sprint.rows[0] || null;
+    let sprintProgress = 0;
+    if (activeSprint) {
+      const total = Number(activeSprint.total_tasks) || 0;
+      const completed = Number(activeSprint.completed_tasks) || 0;
+      sprintProgress = total > 0 ? Math.round((completed / total) * 100) : 0;
+    }
+
+    const modStats = modules.rows[0] || { total: 0, active: 0 };
+    const taskStats = tasks.rows[0] || { active: 0, completed: 0, total: 0 };
+
     successResponse(res, {
-      modules: Number(modules.rows[0].count),
-      tasks: {
-        active: Number(tasks.rows[0].active),
-        total: Number(tasks.rows[0].total),
+      modules: {
+        total: Number(modStats.total || 0),
+        active: Number(modStats.active || 0)
       },
+      tasks: {
+        active: Number(taskStats.active || 0),
+        completed: Number(taskStats.completed || 0),
+        total: Number(taskStats.total || 0),
+      },
+      currentSprint: activeSprint ? {
+        id: activeSprint.id,
+        name: activeSprint.name,
+        progress: sprintProgress
+      } : null
     });
   } catch (err) {
+    console.error("getProjectSummary error:", err);
     errorResponse(res, err.message);
   }
 };
 
-// projectController.js
 export const getMyProjects = async (req, res) => {
   try {
     const { userId, role } = req.user;
