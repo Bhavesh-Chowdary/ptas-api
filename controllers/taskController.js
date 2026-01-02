@@ -31,17 +31,26 @@ const generateTaskCode = async (
   if (!p.rowCount) throw new Error("Project not found");
   const proj = p.rows[0];
   const sprNum = s.rowCount ? s.rows[0].sprint_number : '0';
-  const modCode = m.rowCount ? m.rows[0].module_code : 'R';
-  const modSerial = m.rowCount ? m.rows[0].module_serial : '0';
   const serial = Number(c.rows[0].count) + 1;
 
-  // Format: RS/TEST1/V1/S2/R2/003 (as requested)
+  // Format: RS/TEST/V1/S2/M1/003
+  // projectCode already contains slashes in new format (e.g. "TEST/V1/")
+  let pCode = proj.project_code || 'PROJ';
+  if (pCode.endsWith('/')) pCode = pCode.slice(0, -1);
+
+  const modCodeVal = m.rowCount ? m.rows[0].module_code : 'M0';
+  // If modCode contains projectCode, we might want to strip it for the task code to keep it short
+  let shortModCode = modCodeVal;
+  if (shortModCode.startsWith(proj.project_code)) {
+    shortModCode = shortModCode.replace(proj.project_code, "");
+  }
+  if (!shortModCode.startsWith('M')) shortModCode = 'M' + shortModCode;
+
   return [
     proj.org_code || 'RS',
-    proj.project_code,
-    `V${proj.version}`,
+    pCode,
     `S${sprNum}`,
-    `${modCode}${modSerial}`,
+    shortModCode,
     String(serial).padStart(3, "0")
   ].join("/");
 };

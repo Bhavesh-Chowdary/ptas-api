@@ -31,9 +31,19 @@ export const createModule = async (req, res) => {
     if (!allowed(role))
       return errorResponse(res, "Locked", 403);
 
-    const { project_id, name } = req.body;
+    const { project_id, name, description } = req.body;
     if (!project_id || !name || !name.trim())
       return errorResponse(res, "Invalid module", 400);
+
+    const projectRes = await pool.query(
+      `SELECT project_code FROM projects WHERE id=$1`,
+      [project_id]
+    );
+
+    if (projectRes.rowCount === 0)
+      return errorResponse(res, "Project not found", 404);
+
+    const projectCode = projectRes.rows[0].project_code;
 
     const count = await pool.query(
       `SELECT COUNT(*) FROM modules WHERE project_id=$1`,
@@ -41,14 +51,15 @@ export const createModule = async (req, res) => {
     );
 
     const serial = Number(count.rows[0].count) + 1;
+    const moduleCode = `${projectCode}M${serial}`;
 
     const { rows } = await pool.query(
       `
-      INSERT INTO modules (project_id,name,module_code,module_serial)
-      VALUES ($1,$2,'R',$3)
+      INSERT INTO modules (project_id, name, module_code, module_serial, description)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING *
       `,
-      [project_id, name.trim(), serial]
+      [project_id, name.trim(), moduleCode, serial, description || null]
     );
 
     /* ---- CHANGE LOG ---- */
@@ -60,8 +71,6 @@ export const createModule = async (req, res) => {
       rows[0],
       userId
     );
-
-    /* ---- CHANGE LOG ---- */
 
     successResponse(res, rows[0], 201);
   } catch (err) {
@@ -78,7 +87,7 @@ export const updateModule = async (req, res) => {
       return errorResponse(res, "Locked", 403);
 
     const id = req.params.id || req.query.id;
-    const { name } = req.body;
+    const { name, description } = req.body;
 
     if (!name || !name.trim())
       return errorResponse(res, "Invalid name", 400);
@@ -94,11 +103,11 @@ export const updateModule = async (req, res) => {
     const { rows } = await pool.query(
       `
       UPDATE modules
-      SET name=$1, updated_at=NOW()
-      WHERE id=$2
+      SET name=$1, description=$2, updated_at=NOW()
+      WHERE id=$3
       RETURNING *
       `,
-      [name.trim(), id]
+      [name.trim(), description || null, id]
     );
 
     /* ---- CHANGE LOG ---- */
@@ -110,8 +119,6 @@ export const updateModule = async (req, res) => {
       rows[0],
       userId
     );
-
-    /* ---- CHANGE LOG ---- */
 
     successResponse(res, rows[0]);
   } catch (err) {

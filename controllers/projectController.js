@@ -37,13 +37,10 @@ export const createProject = async (req, res) => {
     }
 
     /* ---- PROJECT CODE ---- */
-    const base = name.replace(/[^A-Za-z]/g, "").slice(0, 4).toUpperCase();
-    const countRes = await pool.query(
-      `SELECT COUNT(*) FROM projects WHERE project_code LIKE $1`,
-      [`${base}%`]
-    );
-    const version = Number(countRes.rows[0].count) + 1;
-    const projectCode = `${base}-${version}`;
+    // User requested format: TEST/V1/ where TEST is project name (clean)
+    const cleanName = name.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const projectCode = `${cleanName}/V1/`;
+    const version = 1;
 
     /* ---- DOCUMENT ---- */
     let document = null;
@@ -100,12 +97,14 @@ export const createProject = async (req, res) => {
     let serial = 1;
     for (const m of modules) {
       if (!m.name?.trim()) continue;
+      // Module code format: PROJECT_CODE + M + SERIAL (e.g., TEST/V1/M1)
+      const moduleCode = `${projectCode}M${serial}`;
       await pool.query(
         `
-        INSERT INTO modules (project_id, name, module_code, module_serial)
-        VALUES ($1,$2,'R',$3)
+        INSERT INTO modules (project_id, name, module_code, module_serial, description)
+        VALUES ($1,$2,$3,$4,$5)
         `,
-        [project.id, m.name.trim(), serial++]
+        [project.id, m.name.trim(), moduleCode, serial++, m.description || null]
       );
     }
 
@@ -235,9 +234,17 @@ export const updateProject = async (req, res) => {
       end_date,
       status,
       color,
-      members = [],
-      modules = [],
     } = req.body;
+
+    const members =
+      typeof req.body.members === "string"
+        ? JSON.parse(req.body.members)
+        : req.body.members || [];
+
+    const modules =
+      typeof req.body.modules === "string"
+        ? JSON.parse(req.body.modules)
+        : req.body.modules || [];
 
     /* ---- BEFORE ---- */
     const beforeRes = await pool.query(
@@ -249,7 +256,15 @@ export const updateProject = async (req, res) => {
     }
     const before = beforeRes.rows[0];
 
-    /* ---- UPDATE PROJECT ---- */
+    /* ---- UPDATE DOCUMENT IF ANY ---- */
+    if (req.file) {
+      await pool.query(
+        `UPDATE projects SET document=$1, document_name=$2, document_type=$3 WHERE id=$4`,
+        [req.file.buffer, req.file.originalname, req.file.mimetype, id]
+      );
+    }
+
+    /* ---- UPDATE PROJECT FIELDS ---- */
     const { rows } = await pool.query(
       `
       UPDATE projects
@@ -263,36 +278,48 @@ export const updateProject = async (req, res) => {
       WHERE id=$7
       RETURNING *
       `,
-      [name, description, start_date, end_date, status, color, id]
+      [
+        name || null,
+        description || null,
+        start_date || null,
+        end_date || null,
+        status || null,
+        color || null,
+        id
+      ]
     );
 
     const updated = rows[0];
 
     /* ---- MEMBERS (Optimized Batch Insert) ---- */
-    await pool.query(`DELETE FROM project_members WHERE project_id=$1`, [id]);
-    if (members.length > 0) {
-      const values = members.map((_, i) => `($1, $${i + 2})`).join(",");
-      await pool.query(
-        `INSERT INTO project_members (project_id, user_id) VALUES ${values}`,
-        [id, ...members]
-      );
+    if (req.body.members !== undefined) {
+      await pool.query(`DELETE FROM project_members WHERE project_id=$1`, [id]);
+      if (members.length > 0) {
+        const values = members.map((_, i) => `($1, $${i + 2})`).join(",");
+        await pool.query(
+          `INSERT INTO project_members (project_id, user_id) VALUES ${values}`,
+          [id, ...members]
+        );
+      }
     }
 
     /* ---- MODULES (Optimized Batch Insert) ---- */
-    const validModules = modules.filter(m => m.name?.trim());
-    if (validModules.length > 0) {
-      let serialRes = await pool.query(
-        `SELECT COALESCE(MAX(module_serial),0) FROM modules WHERE project_id=$1`,
-        [id]
-      );
-      let serial = Number(serialRes.rows[0].coalesce) + 1;
+    if (req.body.modules !== undefined) {
+      const validModules = modules.filter(m => m.name?.trim());
+      if (validModules.length > 0) {
+        let serialRes = await pool.query(
+          `SELECT COALESCE(MAX(module_serial),0) FROM modules WHERE project_id=$1`,
+          [id]
+        );
+        let serial = Number(serialRes.rows[0].coalesce) + 1;
 
-      const values = validModules.map((_, i) => `($1, $${i * 2 + 2}, 'R', $${i * 2 + 3})`).join(",");
-      const flatParams = validModules.flatMap(m => [m.name.trim(), serial++]);
-      await pool.query(
-        `INSERT INTO modules (project_id, name, module_code, module_serial) VALUES ${values}`,
-        [id, ...flatParams]
-      );
+        const values = validModules.map((_, i) => `($1, $${i * 2 + 2}, 'R', $${i * 2 + 3})`).join(",");
+        const flatParams = validModules.flatMap(m => [m.name.trim(), serial++]);
+        await pool.query(
+          `INSERT INTO modules (project_id, name, module_code, module_serial) VALUES ${values}`,
+          [id, ...flatParams]
+        );
+      }
     }
 
     /* ---- CHANGE LOG ---- */
@@ -365,7 +392,7 @@ export const downloadDocument = async (req, res) => {
 
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${file.document_name}"`
+      `inline; filename="${file.document_name}"`
     );
     res.setHeader("Content-Type", file.document_type || 'application/octet-stream');
     res.send(file.document);
