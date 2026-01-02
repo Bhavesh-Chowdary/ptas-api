@@ -130,16 +130,26 @@ export const createProject = async (req, res) => {
 export const getProjects = async (req, res) => {
   try {
     const { userId, role } = req.user;
-    const isPM = role === "Project Manager"; // Normalized
+    const isPM = role === "Project Manager";
+
+    let select = `
+      p.*,
+      COUNT(DISTINCT t.id) as total_tasks,
+      COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'done') as completed_tasks,
+      (
+        SELECT json_agg(json_build_object('id', u.id, 'name', u.full_name))
+        FROM project_members pm
+        JOIN users u ON u.id = pm.user_id
+        WHERE pm.project_id = p.id
+      ) as members
+    `;
 
     let query;
     let params = [];
 
     if (role === "admin" || isPM) {
       query = `
-        SELECT p.*,
-          COUNT(t.id) as total_tasks,
-          COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+        SELECT ${select}
         FROM projects p
         LEFT JOIN tasks t ON t.project_id = p.id
         GROUP BY p.id
@@ -147,9 +157,7 @@ export const getProjects = async (req, res) => {
       `;
     } else {
       query = `
-        SELECT p.*,
-          COUNT(t.id) as total_tasks,
-          COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+        SELECT ${select}
         FROM projects p
         INNER JOIN project_members pm ON pm.project_id = p.id
         LEFT JOIN tasks t ON t.project_id = p.id
@@ -519,6 +527,36 @@ export const getProjectMembers = async (req, res) => {
     successResponse(res, rows);
   } catch (err) {
     console.error("getProjectMembers:", err);
+    errorResponse(res, err.message);
+  }
+};
+
+export const getProjectHierarchy = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [projectRes, modulesRes, sprintsRes, tasksRes] = await Promise.all([
+      pool.query("SELECT * FROM projects WHERE id = $1", [id]),
+      pool.query("SELECT * FROM modules WHERE project_id = $1 ORDER BY module_serial", [id]),
+      pool.query("SELECT * FROM sprints WHERE project_id = $1 ORDER BY sprint_number", [id]),
+      pool.query(`
+        SELECT t.id, t.title, t.module_id, t.sprint_id, t.status, t.assignee_id, u.full_name as assignee_name
+        FROM tasks t
+        LEFT JOIN users u ON u.id = t.assignee_id
+        WHERE t.project_id = $1
+      `, [id])
+    ]);
+
+    if (!projectRes.rowCount) return errorResponse(res, "Project not found", 404);
+
+    successResponse(res, {
+      project: projectRes.rows[0],
+      modules: modulesRes.rows,
+      sprints: sprintsRes.rows,
+      tasks: tasksRes.rows
+    });
+  } catch (err) {
+    console.error("getProjectHierarchy:", err);
     errorResponse(res, err.message);
   }
 };

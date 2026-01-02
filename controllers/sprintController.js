@@ -81,8 +81,17 @@ export const getSprints = async (req, res) => {
         s.*,
         p.name AS project_name,
         p.color AS project_color,
-        COUNT(t.id) as total_tasks,
-        COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+        COUNT(DISTINCT t.id) as total_tasks,
+        COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'done') as completed_tasks,
+        (
+          SELECT json_agg(json_build_object('id', u.id, 'name', u.full_name))
+          FROM (
+            SELECT DISTINCT u.id, u.full_name
+            FROM tasks t2
+            JOIN users u ON u.id = t2.assignee_id
+            WHERE t2.sprint_id = s.id
+          ) u
+        ) as members
       FROM sprints s
       LEFT JOIN projects p ON p.id = s.project_id
       LEFT JOIN tasks t ON t.sprint_id = s.id
@@ -99,7 +108,7 @@ export const getSprints = async (req, res) => {
     const { rows } = await pool.query(q, params);
     successResponse(res, rows);
   } catch (err) {
-    console.error("getSprints:", err);
+    console.error("getSprints error:", err);
     errorResponse(res, err.message);
   }
 };

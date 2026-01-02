@@ -12,7 +12,8 @@ import {
   downloadDocument,
   getProjectSummary,
   getMyProjects,
-  getProjectMembers
+  getProjectMembers,
+  getProjectHierarchy
 } from '../controllers/projectController.js';
 import { getProjectActivity } from '../controllers/changeLogController.js';
 
@@ -29,5 +30,6 @@ router.delete('/:id', permit('admin'), deleteProject); // Fixed /:id
 router.get("/:id/summary", getProjectSummary);
 router.get("/:id/activity", getProjectActivity);
 router.get("/:id/members", authMiddleware, getProjectMembers);
+router.get("/:id/hierarchy", getProjectHierarchy);
 
 export default router;
