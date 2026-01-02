@@ -176,3 +176,37 @@ export const getGlobalActivity = async (req, res) => {
     errorResponse(res, err.message);
   }
 };
+/**
+ * 3️⃣ Sprint-Scoped Activity
+ */
+export const getSprintActivity = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { rows } = await pool.query(
+      `
+      SELECT
+        cl.*,
+        u.full_name AS user_name
+      FROM change_logs cl
+      LEFT JOIN users u ON u.id = cl.changed_by
+      WHERE
+        (cl.entity_type = 'sprint' AND cl.entity_id = $1)
+        OR (
+          cl.entity_type = 'task'
+          AND (
+            (cl.before_data->>'sprint_id')::uuid = $1::uuid
+            OR (cl.after_data->>'sprint_id')::uuid = $1::uuid
+          )
+        )
+      ORDER BY cl.changed_at DESC
+      LIMIT 20
+      `,
+      [id]
+    );
+
+    successResponse(res, rows.map(formatLog));
+  } catch (err) {
+    errorResponse(res, err.message);
+  }
+};
