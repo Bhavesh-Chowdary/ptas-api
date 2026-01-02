@@ -7,7 +7,8 @@ import {
   getSprintById,
   updateSprint,
   deleteSprint,
-  getSprintHierarchy
+  getSprintHierarchy,
+  getNextSprintNumber
 } from '../controllers/sprintController.js';
 
 const router = express.Router();
@@ -15,6 +16,7 @@ const router = express.Router();
 router.use(authMiddleware);
 
 router.get('/:id/hierarchy', getSprintHierarchy);
+router.get('/next-number', getNextSprintNumber);
 router.post('/', permit('admin', 'Project Manager'), createSprint);
 router.get('/', getSprints);
 router.get('/:id', getSprintById);

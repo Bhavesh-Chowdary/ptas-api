@@ -4,7 +4,7 @@ import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 export const createSprint = async (req, res) => {
   try {
-    const { project_id, start_date, end_date, notes, modules } = req.body;
+    const { project_id, start_date, end_date, goal } = req.body;
     const { role, userId } = req.user;
 
     if (!["admin", "Project Manager"].includes(role)) {
@@ -15,17 +15,17 @@ export const createSprint = async (req, res) => {
       return errorResponse(res, "project_id, start_date and end_date are required", 400);
     }
 
-    const count = await pool.query(
-      "SELECT COUNT(*) FROM sprints WHERE project_id = $1",
+    const maxResult = await pool.query(
+      "SELECT MAX(sprint_number) as max_num FROM sprints WHERE project_id = $1",
       [project_id]
     );
 
-    const sprint_number = Number(count.rows[0].count) + 1;
+    const sprint_number = (maxResult.rows[0].max_num || 0) + 1;
 
     const { rows } = await pool.query(
       `
       INSERT INTO sprints
-      (project_id, name, start_date, end_date, status, notes, sprint_number)
+      (project_id, name, start_date, end_date, status, goal, sprint_number)
       VALUES ($1, $2, $3, $4, 'planned', $5, $6)
       RETURNING *
       `,
@@ -34,31 +34,40 @@ export const createSprint = async (req, res) => {
         `Sprint ${sprint_number}`,
         start_date,
         end_date,
-        notes || null,
+        goal || null,
         sprint_number,
       ]
     );
 
     const sprint = rows[0];
 
-    // Handle module associations (Optimized Batch Insert)
-    if (Array.isArray(modules) && modules.length > 0) {
-      const values = modules.map((_, i) => `($1, $${i + 2})`).join(",");
-      await pool.query(
-        `
-        INSERT INTO sprint_modules (sprint_id, module_id)
-        VALUES ${values}
-        ON CONFLICT DO NOTHING
-        `,
-        [sprint.id, ...modules]
-      );
-    }
-
     /* ---- CHANGE LOG ---- */
 
     successResponse(res, sprint, 201);
   } catch (err) {
     console.error("createSprint:", err);
+    errorResponse(res, err.message);
+  }
+};
+
+export const getNextSprintNumber = async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    if (!project_id) {
+      return errorResponse(res, "project_id is required", 400);
+    }
+
+    const count = await pool.query(
+      "SELECT COUNT(*) FROM sprints WHERE project_id = $1",
+      [project_id]
+    );
+
+    // logic matches createSprint: count + 1
+    const nextNum = Number(count.rows[0].count) + 1;
+
+    successResponse(res, { next_number: nextNum });
+  } catch (err) {
+    console.error("getNextSprintNumber:", err);
     errorResponse(res, err.message);
   }
 };
@@ -155,7 +164,7 @@ export const updateSprint = async (req, res) => {
 
     const before = beforeRes.rows[0];
 
-    const { name, start_date, end_date, status, notes } = req.body;
+    const { name, start_date, end_date, status, goal } = req.body;
 
     const { rows } = await pool.query(
       `
@@ -165,12 +174,12 @@ export const updateSprint = async (req, res) => {
         start_date = COALESCE($2, start_date),
         end_date = COALESCE($3, end_date),
         status = COALESCE($4, status),
-        notes = COALESCE($5, notes),
+        goal = COALESCE($5, goal),
         updated_at = NOW()
       WHERE id = $6
       RETURNING *
       `,
-      [name, start_date, end_date, status, notes, id]
+      [name, start_date, end_date, status, goal, id]
     );
 
     const after = rows[0];
