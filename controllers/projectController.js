@@ -380,33 +380,74 @@ export const updateProject = async (req, res) => {
 /* ================= DELETE PROJECT ================= */
 
 export const deleteProject = async (req, res) => {
+  const client = await pool.connect();
   try {
     const { id } = req.params;
-    const { userId } = req.user;
+    const { userId, role } = req.user;
 
-    const beforeRes = await pool.query(
+    if (!["admin", "Project Manager"].includes(role)) {
+      await client.query("ROLLBACK");
+      return errorResponse(res, "Not allowed to delete projects", 403);
+    }
+
+    await client.query("BEGIN");
+
+    const beforeRes = await client.query(
       `SELECT * FROM projects WHERE id=$1`,
       [id]
     );
     if (!beforeRes.rowCount) {
+      await client.query("ROLLBACK");
       return errorResponse(res, "Project not found", 404);
     }
+    const before = beforeRes.rows[0];
 
-    await pool.query(`DELETE FROM projects WHERE id=$1`, [id]);
+    // Cascade Delete
+    // 1. Delete timesheets for tasks in this project
+    await client.query(
+      `DELETE FROM timesheets WHERE task_id IN (SELECT id FROM tasks WHERE project_id = $1)`,
+      [id]
+    );
+
+    // 2. Delete task collaborators
+    await client.query(
+      `DELETE FROM task_collaborators WHERE task_id IN (SELECT id FROM tasks WHERE project_id = $1)`,
+      [id]
+    );
+
+    // 3. Delete tasks
+    await client.query(`DELETE FROM tasks WHERE project_id = $1`, [id]);
+
+    // 4. Delete modules
+    await client.query(`DELETE FROM modules WHERE project_id = $1`, [id]);
+
+    // 5. Delete sprints
+    await client.query(`DELETE FROM sprints WHERE project_id = $1`, [id]);
+
+    // 6. Delete project members
+    await client.query(`DELETE FROM project_members WHERE project_id = $1`, [id]);
+
+    // 7. Finally delete the project
+    await client.query(`DELETE FROM projects WHERE id=$1`, [id]);
 
     /* ---- CHANGE LOG ---- */
     await logChange(
       "project",
       id,
       "deleted",
-      beforeRes.rows[0],
+      before,
       null,
       userId
     );
 
-    successResponse(res, { message: "Deleted" });
+    await client.query("COMMIT");
+    successResponse(res, { message: "Project and all related data deleted successfully" });
   } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("deleteProject error:", err);
     errorResponse(res, err.message);
+  } finally {
+    client.release();
   }
 };
 
