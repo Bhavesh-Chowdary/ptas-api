@@ -4,7 +4,7 @@ import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 export const createSprint = async (req, res) => {
   try {
-    const { project_id, start_date, end_date, goal } = req.body;
+    const { project_id, start_date, end_date, goal, status } = req.body;
     const { role, userId } = req.user;
 
     if (!["admin", "Project Manager"].includes(role)) {
@@ -26,7 +26,7 @@ export const createSprint = async (req, res) => {
       `
       INSERT INTO sprints
       (project_id, name, start_date, end_date, status, goal, sprint_number)
-      VALUES ($1, $2, $3, $4, 'planned', $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
       `,
       [
@@ -34,6 +34,7 @@ export const createSprint = async (req, res) => {
         `Sprint ${sprint_number}`,
         start_date,
         end_date,
+        status || 'active',
         goal || null,
         sprint_number,
       ]
