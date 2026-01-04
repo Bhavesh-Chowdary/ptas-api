@@ -175,11 +175,17 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
 
     // 3. Generate daily slots from start to end date
     const dailyData = [];
-    let curr = new Date(start_date);
-    const end = new Date(end_date);
+
+    // Force UTC parsing to avoid timezone shifts
+    const start = new Date(start_date + 'T00:00:00.000Z');
+    const end = new Date(end_date + 'T00:00:00.000Z');
+
+    let curr = new Date(start);
 
     while (curr <= end) {
       const dateStr = curr.toISOString().split('T')[0];
+      const dayStrDisplay = curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+
       const dayLogs = logs.filter(l => {
         const d = new Date(l.log_date);
         return d.toISOString().split('T')[0] === dateStr;
@@ -194,10 +200,10 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
 
           dailyData.push({
             date: dateStr,
-            day: curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
+            day: dayStrDisplay,
             task_id: l.task_code || 'N/A',
-            start_time: '09:00',
-            end_time: '17:00',
+            start_time: '10:00',
+            end_time: '18:00',
             regular_hrs: regularHours.toFixed(2),
             overtime_hrs: overtimeHours.toFixed(2),
             sick_hrs: '0.00',
@@ -210,7 +216,8 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
       } else {
         // PRE-FILL LOGIC: If no logs, check for assigned tasks
         const tasksForDay = assignedTasks.filter(t => {
-          if (!t.start_date) return false; // Don't pre-fill if no specific start date
+          if (!t.start_date) return false;
+          // Tasks in DB are usually UTC or local but t.start_date as string is often just YYYY-MM-DD
           const sDate = new Date(t.start_date).toISOString().split('T')[0];
           const eDate = t.end_date ? new Date(t.end_date).toISOString().split('T')[0] : sDate;
           return dateStr >= sDate && dateStr <= eDate;
@@ -220,10 +227,10 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
           tasksForDay.forEach(t => {
             dailyData.push({
               date: dateStr,
-              day: curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
+              day: dayStrDisplay,
               task_id: t.task_code || 'N/A',
-              start_time: '09:00',
-              end_time: '17:00',
+              start_time: '10:00',
+              end_time: '18:00',
               regular_hrs: '8.00',
               overtime_hrs: '0.00',
               sick_hrs: '0.00',
@@ -237,7 +244,7 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
           // Empty day placeholder
           dailyData.push({
             date: dateStr,
-            day: curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
+            day: dayStrDisplay,
             task_id: 'N/A',
             start_time: '',
             end_time: '',
@@ -251,7 +258,9 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
           });
         }
       }
-      curr.setDate(curr.getDate() + 1);
+
+      // Move to next day in UTC
+      curr.setUTCDate(curr.getUTCDate() + 1);
     }
 
     const totalHours = dailyData.reduce((acc, d) => acc + parseFloat(d.total_hrs), 0).toFixed(2);
@@ -269,6 +278,7 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
       start_date: start_date,
       end_date: end_date,
       daily_data: dailyData,
+      assigned_tasks: assignedTasks,
       total_hours: totalHours
     });
   } catch (err) {

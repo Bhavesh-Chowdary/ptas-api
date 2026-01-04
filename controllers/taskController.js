@@ -65,6 +65,28 @@ const generateTaskCode = async (
   return [org, projId, resourcePart, version, sprint, moduleId, taskSerial].join("/");
 };
 
+const POTENTIAL_MAP = {
+  'Very Small': { points: 1, hours: 2 },
+  'Small': { points: 2, hours: 4 },
+  'Medium': { points: 3, hours: 6 },
+  'Large': { points: 5, hours: 10 },
+  'Very Large': { points: 8, hours: 18 }
+};
+
+const checkDeveloperLoad = async (assignee_id, sprint_id, current_task_id = null) => {
+  if (!assignee_id || !sprint_id) return { points: 0, hours: 0 };
+  const q = `
+    SELECT SUM(potential_points) as total_points, SUM(target_hours) as total_hours
+    FROM tasks
+    WHERE assignee_id = $1 AND sprint_id = $2 AND id != $3
+  `;
+  const { rows } = await pool.query(q, [assignee_id, sprint_id, current_task_id || -1]);
+  return {
+    points: parseInt(rows[0].total_points || 0),
+    hours: parseFloat(rows[0].total_hours || 0)
+  };
+};
+
 /*
   CREATE TASK
 */
@@ -84,6 +106,7 @@ export const createTask = async (req, res) => {
       end_date,
       collaborators,
       goal_index,
+      potential,
     } = req.body;
 
     const { userId, role } = req.user;
@@ -105,15 +128,26 @@ export const createTask = async (req, res) => {
       assignee_id
     );
 
+    // Load Check
+    if (assignee_id && sprint_id && potential && POTENTIAL_MAP[potential]) {
+      const load = await checkDeveloperLoad(assignee_id, sprint_id);
+      const newTaskLoad = POTENTIAL_MAP[potential];
+      if (load.points + newTaskLoad.points > 20 || load.hours + newTaskLoad.hours > 40) {
+        return errorResponse(res, `Assignee has exceeded the workload limit for this sprint (Max: 20 pts / 40 hrs). Current: ${load.points} pts / ${load.hours} hrs`, 400);
+      }
+    }
+
+    const potData = potential ? POTENTIAL_MAP[potential] : { points: null, hours: null };
+
     const { rows } = await pool.query(
       `
       INSERT INTO tasks
       (task_code, task_key, task_serial, title, description, project_id,
        sprint_id, module_id, assignee_id, created_by, est_hours, status,
-       priority, start_date, end_date, goal_index)
+       priority, start_date, end_date, goal_index, potential, potential_points, target_hours)
       VALUES ($1, $1,
         (SELECT COUNT(*)+1 FROM tasks WHERE project_id=$2),
-        $3,$4,$2,$5,$6,$7,$8,$9, $10, $11, $12, $13, $14)
+        $3,$4,$2,$5,$6,$7,$8,$9, $10, $11, $12, $13, $14, $15, $16, $17)
       RETURNING *
       `,
       [
@@ -131,6 +165,9 @@ export const createTask = async (req, res) => {
         start_date || null,
         end_date || null,
         goal_index !== undefined ? goal_index : null,
+        potential || null,
+        potData.points,
+        potData.hours
       ]
     );
 
@@ -302,6 +339,7 @@ export const updateTask = async (req, res) => {
       description,
       module_id,
       assignee_id,
+      sprint_id,
       status,
       start_datetime,
       end_datetime,
@@ -312,20 +350,52 @@ export const updateTask = async (req, res) => {
       collaborators,
       priority,
       goal_index,
+      potential,
     } = req.body;
+
+    // Load Check if potential or assignee/sprint changes
+    const targetAssignee = assignee_id || before.assignee_id;
+    const targetSprint = sprint_id || before.sprint_id;
+    const targetPotential = potential || before.potential;
+
+    if (targetAssignee && targetSprint && targetPotential && POTENTIAL_MAP[targetPotential]) {
+      const load = await checkDeveloperLoad(targetAssignee, targetSprint, id);
+      const newTaskLoad = POTENTIAL_MAP[targetPotential];
+      if (load.points + newTaskLoad.points > 20 || load.hours + newTaskLoad.hours > 40) {
+        return errorResponse(res, `Assignee workload limit exceeded (Max: 20 pts / 40 hrs). Sprint load would become: ${load.points + newTaskLoad.points} pts / ${load.hours + newTaskLoad.hours} hrs`, 400);
+      }
+    }
+
+    const potData = potential ? POTENTIAL_MAP[potential] : null;
 
     let in_progress_at = before.in_progress_at;
     let completed_at = before.completed_at;
-    let duration = before.task_duration_minutes;
+    let duration = before.task_duration_minutes || 0;
+    let current_period_start = before.current_period_start;
 
-    if (status === 'in_progress' && before.status !== 'in_progress' && !in_progress_at) {
-      in_progress_at = new Date();
-    }
-    if (status === 'done' && before.status !== 'done') {
-      completed_at = new Date();
-      if (in_progress_at) {
-        const diff = new Date(completed_at) - new Date(in_progress_at);
-        duration = Math.round(diff / (1000 * 60));
+    // Transition Logic
+    if (status && status !== before.status) {
+      const normalizedStatus = status.toLowerCase().replace(/\s+/g, '_');
+      const normalizedBefore = (before.status || '').toLowerCase().replace(/\s+/g, '_');
+
+      if (normalizedStatus !== normalizedBefore) {
+        // Moving TO in_progress
+        if (normalizedStatus === 'in_progress') {
+          current_period_start = new Date();
+          if (!in_progress_at) in_progress_at = current_period_start;
+        }
+        // Moving FROM in_progress
+        else if (normalizedBefore === 'in_progress') {
+          if (current_period_start) {
+            const diff = new Date() - new Date(current_period_start);
+            duration = Number(duration) + Math.round(diff / (1000 * 60));
+            current_period_start = null;
+          }
+        }
+
+        if (normalizedStatus === 'done') {
+          completed_at = new Date();
+        }
       }
     }
 
@@ -348,6 +418,10 @@ export const updateTask = async (req, res) => {
         start_date = COALESCE($15, start_date),
         end_date = COALESCE($16, end_date),
         goal_index = COALESCE($17, goal_index),
+        potential = COALESCE($18, potential),
+        potential_points = COALESCE($19, potential_points),
+        target_hours = COALESCE($20, target_hours),
+        current_period_start = $21,
         updated_at = NOW()
       WHERE id = $10
       RETURNING *
@@ -370,7 +444,11 @@ export const updateTask = async (req, res) => {
       priority,
       start_date,
       end_date,
-      goal_index !== undefined ? goal_index : null
+      goal_index !== undefined ? goal_index : null,
+      potential || null,
+      potData ? potData.points : null,
+      potData ? potData.hours : null,
+      current_period_start
     ]);
 
     if (Array.isArray(collaborators)) {
