@@ -497,9 +497,11 @@ export const getProjectSummary = async (req, res) => {
       `, [id]),
       pool.query(`
         SELECT
-          COUNT(*) FILTER (WHERE LOWER(status) != 'done') AS active,
-          COUNT(*) FILTER (WHERE LOWER(status) = 'done') AS completed,
-          COUNT(*) AS total
+          COUNT(*) FILTER (WHERE LOWER(status) NOT IN ('done', 'completed')) AS active,
+          COUNT(*) FILTER (WHERE LOWER(status) IN ('done', 'completed')) AS completed,
+          COUNT(*) AS total,
+          COALESCE(SUM(potential_points), 0) as total_points,
+          COALESCE(SUM(potential_points) FILTER (WHERE LOWER(status) IN ('done', 'completed')), 0) as completed_points
         FROM tasks
         WHERE project_id=$1
       `, [id]),
@@ -507,7 +509,9 @@ export const getProjectSummary = async (req, res) => {
         SELECT 
           s.*,
           (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id) as total_tasks,
-          (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) = 'done') as completed_tasks
+          (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
+          (SELECT COALESCE(SUM(potential_points), 0) FROM tasks t WHERE t.sprint_id = s.id) as total_points,
+          (SELECT COALESCE(SUM(potential_points), 0) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) IN ('done', 'completed')) as completed_points
         FROM sprints s
         WHERE s.project_id = $1 AND s.status != 'completed'
         ORDER BY s.start_date ASC
@@ -518,9 +522,9 @@ export const getProjectSummary = async (req, res) => {
     const activeSprint = sprint.rows[0] || null;
     let sprintProgress = 0;
     if (activeSprint) {
-      const total = Number(activeSprint.total_tasks) || 0;
-      const completed = Number(activeSprint.completed_tasks) || 0;
-      sprintProgress = total > 0 ? Math.round((completed / total) * 100) : 0;
+      const totalTasks = Number(activeSprint.total_tasks) || 0;
+      const completedTasks = Number(activeSprint.completed_tasks) || 0;
+      sprintProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
     }
 
     const modStats = modules.rows[0] || { total: 0, active: 0 };
@@ -535,6 +539,9 @@ export const getProjectSummary = async (req, res) => {
         active: Number(taskStats.active || 0),
         completed: Number(taskStats.completed || 0),
         total: Number(taskStats.total || 0),
+        progress: Number(taskStats.total || 0) > 0 ? Math.round((Number(taskStats.completed || 0) / Number(taskStats.total || 0)) * 100) : 0,
+        total_points: Number(taskStats.total_points || 0),
+        completed_points: Number(taskStats.completed_points || 0)
       },
       currentSprint: activeSprint ? {
         id: activeSprint.id,

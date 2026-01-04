@@ -13,7 +13,9 @@ export const getActiveProjects = async (req, res) => {
         let q = `
       SELECT p.*, 
         COUNT(t.id) as total_tasks,
-        COUNT(t.id) FILTER (WHERE t.status = 'done') as completed_tasks
+        COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
+        COALESCE(SUM(t.potential_points), 0) as total_points,
+        COALESCE(SUM(t.potential_points) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')), 0) as completed_points
       FROM projects p
       LEFT JOIN tasks t ON t.project_id = p.id
       WHERE p.status = 'active'
@@ -44,7 +46,11 @@ export const getActiveSprints = async (req, res) => {
         const isAdmin = ["admin", "Project Manager"].includes(role);
 
         let q = `
-      SELECT s.*, p.name as project_name
+      SELECT s.*, p.name as project_name, p.color as project_color,
+        (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id) as total_tasks,
+        (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
+        (SELECT COALESCE(SUM(potential_points), 0) FROM tasks t WHERE t.sprint_id = s.id) as total_points,
+        (SELECT COALESCE(SUM(potential_points), 0) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) IN ('done', 'completed')) as completed_points
       FROM sprints s
       JOIN projects p ON p.id = s.project_id
       WHERE s.status = 'active'

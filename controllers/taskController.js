@@ -112,6 +112,11 @@ export const createTask = async (req, res) => {
     const { userId, role } = req.user;
 
     // Enforce Project Membership
+    if (role.toLowerCase() === 'developer' && Number(assignee_id) !== Number(userId)) {
+      return errorResponse(res, "Developers can only create tasks assigned to themselves.", 403);
+    }
+
+    // Enforce Project Membership
     const memberCheck = await pool.query(
       `SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2`,
       [project_id, userId]
@@ -330,8 +335,11 @@ export const updateTask = async (req, res) => {
     if (!beforeRes.rowCount) return errorResponse(res, "Task not found", 404);
     const before = beforeRes.rows[0];
 
-    if (role === "developer" && before.assignee_id !== userId) {
-      return errorResponse(res, "Not allowed to edit this task", 403);
+    const userRole = (role || "").toLowerCase();
+    const canManageAll = userRole === "admin" || role === "Project Manager"; // PM is often mixed case in this DB
+
+    if (userRole === "developer" && Number(before.assignee_id) !== Number(userId)) {
+      return errorResponse(res, "Developers can only edit tasks assigned to themselves.", 403);
     }
 
     const {
@@ -353,7 +361,10 @@ export const updateTask = async (req, res) => {
       potential,
     } = req.body;
 
-    // Load Check if potential or assignee/sprint changes
+    // Developer Restriction: Cannot change assignee
+    if (userRole === "developer" && assignee_id && Number(assignee_id) !== Number(userId)) {
+      return errorResponse(res, "Developers cannot reassign tasks to others.", 403);
+    }
     const targetAssignee = assignee_id || before.assignee_id;
     const targetSprint = sprint_id || before.sprint_id;
     const targetPotential = potential || before.potential;
