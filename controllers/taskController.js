@@ -15,44 +15,54 @@ const generateTaskCode = async (
   module_id,
   assignee_id
 ) => {
-  const [p, s, m, c] = await Promise.all([
+  const uid = getUserId(assignee_id);
+  const [p, s, m, u, c] = await Promise.all([
     pool.query(
-      "SELECT org_code, project_code, version FROM projects WHERE id=$1",
+      "SELECT org_code, project_code, name, version FROM projects WHERE id=$1",
       [project_id]
     ),
     pool.query("SELECT sprint_number FROM sprints WHERE id=$1", [sprint_id]),
     pool.query(
-      "SELECT module_code, module_serial FROM modules WHERE id=$1",
+      "SELECT module_serial FROM modules WHERE id=$1",
       [module_id]
     ),
+    uid
+      ? pool.query("SELECT resource_serial FROM users WHERE id=$1", [uid])
+      : Promise.resolve({ rowCount: 0 }),
     pool.query("SELECT COUNT(*) FROM tasks WHERE project_id=$1", [project_id]),
   ]);
 
   if (!p.rowCount) throw new Error("Project not found");
   const proj = p.rows[0];
   const sprNum = s.rowCount ? s.rows[0].sprint_number : '0';
+  const modSerial = m.rowCount ? m.rows[0].module_serial : '1';
+  const resSerial = u.rowCount ? (u.rows[0].resource_serial || '0') : '0';
   const serial = Number(c.rows[0].count) + 1;
 
-  // Format: RS/TEST/V1/S2/M1/003
-  // projectCode already contains slashes in new format (e.g. "TEST/V1/")
-  let pCode = proj.project_code || 'PROJ';
-  if (pCode.endsWith('/')) pCode = pCode.slice(0, -1);
+  // 1. org (RS)
+  const org = (proj.org_code || 'RS').toUpperCase();
 
-  const modCodeVal = m.rowCount ? m.rows[0].module_code : 'M0';
-  // If modCode contains projectCode, we might want to strip it for the task code to keep it short
-  let shortModCode = modCodeVal;
-  if (shortModCode.startsWith(proj.project_code)) {
-    shortModCode = shortModCode.replace(proj.project_code, "");
-  }
-  if (!shortModCode.startsWith('M')) shortModCode = 'M' + shortModCode;
+  // 2. project id (not name) -> use the code prefix
+  const projId = (proj.project_code || 'PROJ').split('/')[0].toUpperCase();
 
-  return [
-    proj.org_code || 'RS',
-    pCode,
-    `S${sprNum}`,
-    shortModCode,
-    String(serial).padStart(3, "0")
-  ].join("/");
+  // 3. resource serial (from users table)
+  const resourcePart = String(resSerial);
+
+  // 4. version (V1, V2...)
+  let version = String(proj.version || '1').toUpperCase();
+  if (!version.startsWith('V')) version = 'V' + version;
+
+  // 5. sprint (S1, S2...)
+  const sprint = `S${sprNum}`;
+
+  // 6. module id (2 letters from project id + serial)
+  const projLetters = projId.substring(0, 2);
+  const moduleId = `${projLetters}${modSerial}`;
+
+  // 7. task serial
+  const taskSerial = String(serial).padStart(3, "0");
+
+  return [org, projId, resourcePart, version, sprint, moduleId, taskSerial].join("/");
 };
 
 /*

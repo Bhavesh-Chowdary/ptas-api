@@ -4,7 +4,8 @@ export const generateActivityMessage = (log) => {
     const entityName = after_data?.title || after_data?.name || before_data?.title || before_data?.name || entity_id;
 
     const idTag = log.after_data?.task_code || log.after_data?.project_code || log.entity_id;
-    const prefix = idTag ? `#${idTag} ` : '';
+    // Don't show task ID prefix for tasks, as requested. Show it for others if available.
+    const prefix = (entity_type === 'task' || !idTag) ? '' : `#${idTag} `;
 
     if (entity_type === 'task') {
         if (action === 'created') return `${prefix}Created task ${entityName}`;
