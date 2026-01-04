@@ -37,10 +37,37 @@ export const createProject = async (req, res) => {
     }
 
     /* ---- PROJECT CODE ---- */
-    // User requested format: TEST/V1/ where TEST is project name (clean)
-    const cleanName = name.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const projectCode = `${cleanName}/V1/`;
-    const version = 1;
+    const generateUniqueProjectCode = async (projectName) => {
+      // Remove numbers and special chars, keep only letters
+      let alphaOnly = projectName.trim().toUpperCase().replace(/[^A-Z]/g, "");
+      let baseCode = alphaOnly.substring(0, 4);
+      if (baseCode.length < 3) baseCode = (baseCode + "PRJ").substring(0, 3);
+
+      let code = baseCode;
+      let attempt = 0;
+      while (attempt < 20) {
+        const check = await pool.query("SELECT 1 FROM projects WHERE project_code = $1", [code]);
+        if (check.rowCount === 0) return code;
+
+        // If exists, try shifting or appending letters to keep it unique without numbers
+        attempt++;
+        if (alphaOnly.length >= 4 + attempt) {
+          code = alphaOnly.substring(attempt, attempt + 4);
+        } else {
+          code = baseCode.substring(0, 3) + String.fromCharCode(64 + attempt);
+        }
+      }
+      return baseCode + Math.floor(Math.random() * 100); // Absolute fallback
+    };
+
+    const projectCode = await generateUniqueProjectCode(name);
+
+    // Extract version if name is like "TEST-1"
+    let version = 1;
+    const versionMatch = name.match(/-(\d+)$/);
+    if (versionMatch) {
+      version = parseInt(versionMatch[1]);
+    }
 
     /* ---- DOCUMENT ---- */
     let document = null;
@@ -321,8 +348,12 @@ export const updateProject = async (req, res) => {
         );
         let serial = Number(serialRes.rows[0].coalesce) + 1;
 
-        const values = validModules.map((_, i) => `($1, $${i * 2 + 2}, 'R', $${i * 2 + 3})`).join(",");
-        const flatParams = validModules.flatMap(m => [m.name.trim(), serial++]);
+        const values = validModules.map((_, i) => `($1, $${i * 3 + 2}, $${i * 3 + 3}, $${i * 3 + 4})`).join(",");
+        const flatParams = validModules.flatMap(m => {
+          const modSerial = serial++;
+          const modCode = `${updated.project_code}M${modSerial}`;
+          return [m.name.trim(), modCode, modSerial];
+        });
         await pool.query(
           `INSERT INTO modules (project_id, name, module_code, module_serial) VALUES ${values}`,
           [id, ...flatParams]

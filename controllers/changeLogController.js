@@ -93,15 +93,17 @@ export const getChangeLogs = async (req, res) => {
 export const getProjectActivity = async (req, res) => {
   try {
     const { id } = req.params;
+    const { role } = req.user;
+    const isAdmin = ["admin", "Project Manager"].includes(role);
 
-    const { rows } = await pool.query(
-      `
+    let q = `
       SELECT
         cl.*,
-        u.full_name AS user_name
+        u.full_name AS user_name,
+        u.role AS user_role
       FROM change_logs cl
       LEFT JOIN users u ON u.id = cl.changed_by
-      WHERE
+      WHERE (
         (cl.entity_type = 'project' AND cl.entity_id = $1)
         OR (
           cl.entity_type IN ('task','module', 'sprint')
@@ -110,12 +112,17 @@ export const getProjectActivity = async (req, res) => {
             OR (cl.after_data->>'project_id')::uuid = $1::uuid
           )
         )
-      ORDER BY cl.changed_at DESC
-      LIMIT 20
-      `,
-      [id]
-    );
+      )
+      AND cl.changed_at >= NOW() - INTERVAL '2 days'
+    `;
 
+    if (!isAdmin) {
+      q += ` AND (u.role IS NULL OR u.role NOT IN ('admin', 'Project Manager')) `;
+    }
+
+    q += ` ORDER BY cl.changed_at DESC LIMIT 20`;
+
+    const { rows } = await pool.query(q, [id]);
     successResponse(res, rows.map(formatLog));
   } catch (err) {
     errorResponse(res, err.message);
@@ -133,16 +140,19 @@ export const getGlobalActivity = async (req, res) => {
     let q = `
       SELECT
         cl.*,
-        u.full_name AS user_name
+        u.full_name AS user_name,
+        u.role AS user_role
       FROM change_logs cl
       LEFT JOIN users u ON u.id = cl.changed_by
+      WHERE cl.changed_at >= NOW() - INTERVAL '2 days'
     `;
     const params = [];
 
     if (!isAdmin) {
       // Developer/QA visibility rules
       q += `
-        WHERE 
+        AND u.role NOT IN ('admin', 'Project Manager')
+        AND (
           cl.changed_by = $1
           OR (
             cl.entity_type = 'task' 
@@ -163,6 +173,7 @@ export const getGlobalActivity = async (req, res) => {
               AND pm.user_id = $1
             )
           )
+        )
       `;
       params.push(userId);
     }
@@ -182,15 +193,17 @@ export const getGlobalActivity = async (req, res) => {
 export const getSprintActivity = async (req, res) => {
   try {
     const { id } = req.params;
+    const { role } = req.user;
+    const isAdmin = ["admin", "Project Manager"].includes(role);
 
-    const { rows } = await pool.query(
-      `
+    let q = `
       SELECT
         cl.*,
-        u.full_name AS user_name
+        u.full_name AS user_name,
+        u.role AS user_role
       FROM change_logs cl
       LEFT JOIN users u ON u.id = cl.changed_by
-      WHERE
+      WHERE (
         (cl.entity_type = 'sprint' AND cl.entity_id = $1)
         OR (
           cl.entity_type = 'task'
@@ -199,12 +212,17 @@ export const getSprintActivity = async (req, res) => {
             OR (cl.after_data->>'sprint_id')::uuid = $1::uuid
           )
         )
-      ORDER BY cl.changed_at DESC
-      LIMIT 20
-      `,
-      [id]
-    );
+      )
+      AND cl.changed_at >= NOW() - INTERVAL '2 days'
+    `;
 
+    if (!isAdmin) {
+      q += ` AND (u.role IS NULL OR u.role NOT IN ('admin', 'Project Manager')) `;
+    }
+
+    q += ` ORDER BY cl.changed_at DESC LIMIT 20`;
+
+    const { rows } = await pool.query(q, [id]);
     successResponse(res, rows.map(formatLog));
   } catch (err) {
     errorResponse(res, err.message);
