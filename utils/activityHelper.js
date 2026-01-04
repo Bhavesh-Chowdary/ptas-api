@@ -1,47 +1,62 @@
 export const generateActivityMessage = (log) => {
-    const { entity_type, action, after_data, before_data, entity_id } = log;
+    const { entity_type, action, after_data, before_data, entity_id, user_name } = log;
 
-    const entityName = after_data?.title || after_data?.name || before_data?.title || before_data?.name || entity_id;
+    // Resolve name of the object (Task title, Project name, Sprint name, etc.)
+    const entityName = after_data?.title || after_data?.name || before_data?.title || before_data?.name || '';
 
-    const idTag = log.after_data?.task_code || log.after_data?.project_code || log.entity_id;
-    // Don't show task ID prefix for tasks, as requested. Show it for others if available.
-    const prefix = (entity_type === 'task' || !idTag) ? '' : `#${idTag} `;
+    // Fallback if name is missing (avoid UUID if possible)
+    let displayName = entityName;
+    if (!displayName) {
+        if (entity_type === 'task') displayName = 'a task';
+        else if (entity_type === 'project') displayName = 'a project';
+        else if (entity_type === 'sprint') displayName = 'a sprint';
+        else if (entity_type === 'module') displayName = 'a module';
+        else displayName = entity_type || 'item';
+    }
 
+    const userName = user_name || "Someone";
+
+    // Task Activities
     if (entity_type === 'task') {
-        if (action === 'created') return `${prefix}Created task ${entityName}`;
-        if (action === 'deleted') return `${prefix}Deleted task ${entityName}`;
+        if (action === 'created') return `New task ${displayName} created by ${userName}`;
+        if (action === 'deleted') return `Task ${displayName} deleted by ${userName}`;
         if (action === 'updated') {
             if (before_data?.status !== after_data?.status) {
-                if (after_data?.status === 'done') return `${prefix}Completed task ${entityName}`;
-                if (after_data?.status === 'in_progress') return `${prefix}Started task ${entityName}`;
-                return `${prefix}Moved task ${entityName} to ${after_data.status.replace('_', ' ')}`;
+                if (after_data?.status === 'done') return `Task ${displayName} completed by ${userName}`;
+                if (after_data?.status === 'in_progress') return `Small progress made on ${displayName} by ${userName}`;
+                return `${userName} moved ${displayName} to ${after_data.status.replace('_', ' ')}`;
             }
-            return `${prefix}Updated task ${entityName}`;
+            return `Task ${displayName} updated by ${userName}`;
         }
     }
 
+    // Project Activities
     if (entity_type === 'project') {
-        if (action === 'created') return `${prefix}Created project ${entityName}`;
-        if (action === 'updated') return `${prefix}Updated project ${entityName}`;
-        if (action === 'deleted') return `${prefix}Deleted project ${entityName}`;
+        if (action === 'created') return `New project ${displayName} has been created by ${userName}`;
+        if (action === 'updated') return `Project ${displayName} was updated by ${userName}`;
+        if (action === 'deleted') return `Project ${displayName} was deleted by ${userName}`;
     }
 
+    // Module Activities
     if (entity_type === 'module') {
-        if (action === 'created') return `${prefix}Added module ${entityName} to project`;
-        if (action === 'updated') return `${prefix}Updated module ${entityName}`;
-        if (action === 'deleted') return `${prefix}Removed module ${entityName}`;
+        if (action === 'created') return `New module ${displayName} added by ${userName}`;
+        if (action === 'updated') return `Module ${displayName} updated by ${userName}`;
+        if (action === 'deleted') return `Module ${displayName} removed by ${userName}`;
     }
 
+    // Sprint Activities
     if (entity_type === 'sprint') {
-        if (action === 'created') return `${prefix}Created sprint ${entityName}`;
+        if (action === 'created') return `New sprint ${displayName} created by ${userName}`;
         if (action === 'updated') {
             if (before_data?.status !== after_data?.status) {
-                return `${prefix}Sprint ${entityName} is now ${after_data.status}`;
+                const status = after_data?.status?.replace('_', ' ') || 'updated';
+                return `Sprint ${displayName} status changed to ${status} by ${userName}`;
             }
-            return `${prefix}Updated sprint ${entityName}`;
+            return `Sprint ${displayName} updated by ${userName}`;
         }
-        if (action === 'deleted') return `${prefix}Deleted sprint ${entityName}`;
+        if (action === 'deleted') return `Sprint ${displayName} deleted by ${userName}`;
     }
 
-    return `${prefix}${action.charAt(0).toUpperCase() + action.slice(1)} ${entity_type} ${entityName}`;
+    // Default Fallback
+    return `${displayName} ${action} by ${userName}`;
 };

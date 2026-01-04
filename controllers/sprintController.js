@@ -42,6 +42,7 @@ export const createSprint = async (req, res) => {
     const sprint = rows[0];
 
     /* ---- CHANGE LOG ---- */
+    await logChange("sprint", sprint.id, "created", null, sprint, userId);
 
     successResponse(res, sprint, 201);
   } catch (err) {
@@ -193,7 +194,7 @@ export const updateSprint = async (req, res) => {
 
     const after = rows[0];
 
-    await logChange("sprint", id, "update", before, after, userId);
+    await logChange("sprint", id, "updated", before, after, userId);
 
     /* ---- CHANGE LOG ---- */
 
@@ -217,16 +218,15 @@ export const deleteSprint = async (req, res) => {
       return errorResponse(res, "Sprint id is required", 400);
     }
 
-    const { rowCount } = await pool.query(
-      "DELETE FROM sprints WHERE id = $1",
-      [id]
-    );
-
-    if (!rowCount) {
+    const beforeRes = await pool.query("SELECT * FROM sprints WHERE id = $1", [id]);
+    if (!beforeRes.rowCount) {
       return errorResponse(res, "Sprint not found", 404);
     }
 
+    await pool.query("DELETE FROM sprints WHERE id = $1", [id]);
+
     /* ---- CHANGE LOG ---- */
+    await logChange("sprint", id, "deleted", beforeRes.rows[0], null, req.user.userId);
 
     successResponse(res, { message: "Sprint deleted successfully" });
   } catch (err) {

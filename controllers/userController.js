@@ -30,3 +30,18 @@ export const getAssignableUsers = async (req, res) => {
     errorResponse(res, err.message);
   }
 };
+export const getSupervisors = async (req, res) => {
+  try {
+    const q = `
+      SELECT id, full_name, email, role
+      FROM users
+      WHERE role IN ('admin', 'Project Manager')
+        AND is_active=true
+      ORDER BY full_name
+    `;
+    const { rows } = await pool.query(q);
+    successResponse(res, rows);
+  } catch (err) {
+    errorResponse(res, err.message);
+  }
+};
