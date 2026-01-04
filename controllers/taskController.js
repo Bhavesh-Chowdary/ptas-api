@@ -83,6 +83,7 @@ export const createTask = async (req, res) => {
       start_date,
       end_date,
       collaborators,
+      goal_index,
     } = req.body;
 
     const { userId, role } = req.user;
@@ -109,10 +110,10 @@ export const createTask = async (req, res) => {
       INSERT INTO tasks
       (task_code, task_key, task_serial, title, description, project_id,
        sprint_id, module_id, assignee_id, created_by, est_hours, status,
-       priority, start_date, end_date)
+       priority, start_date, end_date, goal_index)
       VALUES ($1, $1,
         (SELECT COUNT(*)+1 FROM tasks WHERE project_id=$2),
-        $3,$4,$2,$5,$6,$7,$8,$9, $10, $11, $12, $13)
+        $3,$4,$2,$5,$6,$7,$8,$9, $10, $11, $12, $13, $14)
       RETURNING *
       `,
       [
@@ -129,6 +130,7 @@ export const createTask = async (req, res) => {
         priority,
         start_date || null,
         end_date || null,
+        goal_index !== undefined ? goal_index : null,
       ]
     );
 
@@ -309,6 +311,7 @@ export const updateTask = async (req, res) => {
       actual_hours,
       collaborators,
       priority,
+      goal_index,
     } = req.body;
 
     let in_progress_at = before.in_progress_at;
@@ -344,6 +347,7 @@ export const updateTask = async (req, res) => {
         priority = COALESCE($14, priority),
         start_date = COALESCE($15, start_date),
         end_date = COALESCE($16, end_date),
+        goal_index = COALESCE($17, goal_index),
         updated_at = NOW()
       WHERE id = $10
       RETURNING *
@@ -365,7 +369,8 @@ export const updateTask = async (req, res) => {
       duration,
       priority,
       start_date,
-      end_date
+      end_date,
+      goal_index !== undefined ? goal_index : null
     ]);
 
     if (Array.isArray(collaborators)) {

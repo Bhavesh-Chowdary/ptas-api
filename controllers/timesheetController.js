@@ -163,6 +163,16 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
     const logsRes = await pool.query(logQuery, logParams);
     const logs = logsRes.rows;
 
+    // 2.5 Fetch all tasks assigned to this user in this project to pre-fill
+    let taskQuery = `
+      SELECT task_code, start_date, end_date 
+      FROM tasks 
+      WHERE assignee_id = $1 
+        AND project_id = $2
+    `;
+    const assignedTasksRes = await pool.query(taskQuery, [user_id, project_id]);
+    const assignedTasks = assignedTasksRes.rows;
+
     // 3. Generate daily slots from start to end date
     const dailyData = [];
     let curr = new Date(start_date);
@@ -175,24 +185,72 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
         return d.toISOString().split('T')[0] === dateStr;
       });
 
-      const totalMins = dayLogs.reduce((acc, l) => acc + l.minutes_logged, 0);
-      const regularHours = Math.min(8, totalMins / 60);
-      const overtimeHours = Math.max(0, (totalMins / 60) - 8);
+      if (dayLogs.length > 0) {
+        // Use existing logs
+        dayLogs.forEach(l => {
+          const totalMins = l.minutes_logged;
+          const regularHours = Math.min(8, totalMins / 60);
+          const overtimeHours = Math.max(0, (totalMins / 60) - 8);
 
-      dailyData.push({
-        date: dateStr,
-        day: curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
-        task_id: dayLogs.map(l => l.task_code || 'N/A').join(', '),
-        start_time: totalMins > 0 ? '09:00' : '',
-        end_time: totalMins > 0 ? '17:00' : '',
-        regular_hrs: regularHours.toFixed(2),
-        overtime_hrs: overtimeHours.toFixed(2),
-        sick_hrs: '0.00',
-        vacation_hrs: '0.00',
-        holiday_hrs: '0.00',
-        other_hrs: '0.00',
-        total_hrs: (totalMins / 60).toFixed(2)
-      });
+          dailyData.push({
+            date: dateStr,
+            day: curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
+            task_id: l.task_code || 'N/A',
+            start_time: '09:00',
+            end_time: '17:00',
+            regular_hrs: regularHours.toFixed(2),
+            overtime_hrs: overtimeHours.toFixed(2),
+            sick_hrs: '0.00',
+            vacation_hrs: '0.00',
+            holiday_hrs: '0.00',
+            other_hrs: '0.00',
+            total_hrs: (totalMins / 60).toFixed(2)
+          });
+        });
+      } else {
+        // PRE-FILL LOGIC: If no logs, check for assigned tasks
+        const tasksForDay = assignedTasks.filter(t => {
+          if (!t.start_date) return false; // Don't pre-fill if no specific start date
+          const sDate = new Date(t.start_date).toISOString().split('T')[0];
+          const eDate = t.end_date ? new Date(t.end_date).toISOString().split('T')[0] : sDate;
+          return dateStr >= sDate && dateStr <= eDate;
+        });
+
+        if (tasksForDay.length > 0) {
+          tasksForDay.forEach(t => {
+            dailyData.push({
+              date: dateStr,
+              day: curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
+              task_id: t.task_code || 'N/A',
+              start_time: '09:00',
+              end_time: '17:00',
+              regular_hrs: '8.00',
+              overtime_hrs: '0.00',
+              sick_hrs: '0.00',
+              vacation_hrs: '0.00',
+              holiday_hrs: '0.00',
+              other_hrs: '0.00',
+              total_hrs: '8.00'
+            });
+          });
+        } else {
+          // Empty day placeholder
+          dailyData.push({
+            date: dateStr,
+            day: curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
+            task_id: 'N/A',
+            start_time: '',
+            end_time: '',
+            regular_hrs: '0.00',
+            overtime_hrs: '0.00',
+            sick_hrs: '0.00',
+            vacation_hrs: '0.00',
+            holiday_hrs: '0.00',
+            other_hrs: '0.00',
+            total_hrs: '0.00'
+          });
+        }
+      }
       curr.setDate(curr.getDate() + 1);
     }
 
