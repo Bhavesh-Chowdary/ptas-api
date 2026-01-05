@@ -296,3 +296,96 @@ export const getSprintHierarchy = async (req, res) => {
     errorResponse(res, err.message);
   }
 };
+
+export const getSprintBurndown = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. Get Sprint Dates
+    const sprintRes = await pool.query(
+      "SELECT start_date, end_date FROM sprints WHERE id = $1",
+      [id]
+    );
+    if (!sprintRes.rowCount) return errorResponse(res, "Sprint not found", 404);
+    const { start_date, end_date } = sprintRes.rows[0];
+
+    // 2. Get all tasks and their estimates + completion dates
+    const tasksRes = await pool.query(
+      `SELECT 
+        COALESCE(est_hours, target_hours, 0) as estimate,
+        completed_at,
+        status
+       FROM tasks 
+       WHERE sprint_id = $1`,
+      [id]
+    );
+    const tasks = tasksRes.rows;
+
+    // 3. Get daily logged hours
+    const logsRes = await pool.query(
+      `SELECT 
+        log_date::date as date,
+        SUM(minutes_logged) / 60.0 as hours_logged
+       FROM timesheets
+       WHERE task_id IN (SELECT id FROM tasks WHERE sprint_id = $1)
+       GROUP BY log_date::date
+       ORDER BY log_date::date ASC`,
+      [id]
+    );
+    const dailyLogs = logsRes.rows;
+
+    // Generate Chart Data
+    const start = new Date(start_date);
+    const end = new Date(end_date);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+
+    const chartData = [];
+    let current = new Date(start);
+    const totalEst = tasks.reduce((sum, t) => sum + Number(t.estimate), 0);
+
+    // Calculate days diff
+    const totalDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+    const step = totalEst / (totalDays || 1);
+
+    let dayIndex = 0;
+    while (current <= end) {
+      const dateStr = current.toISOString().split('T')[0];
+
+      // Method 1: Remaining Estimate
+      const completedUntilNow = tasks.filter(t => {
+        if (t.status !== 'done' || !t.completed_at) return false;
+        const compDate = new Date(t.completed_at);
+        return compDate <= current;
+      });
+      const completedEst = completedUntilNow.reduce((sum, t) => sum + Number(t.estimate), 0);
+      const remainingEst = Math.max(0, totalEst - completedEst);
+
+      // Method 2: Actual Time Remaining (Total Est - Cumulative Logged)
+      const logsUntilNow = dailyLogs.filter(l => new Date(l.date) <= current);
+      const totalLogged = logsUntilNow.reduce((sum, l) => sum + Number(l.hours_logged), 0);
+      const remainingActual = Math.max(0, totalEst - totalLogged);
+
+      // Ideal
+      const ideal = Math.max(0, totalEst - (step * dayIndex));
+
+      const isFuture = current > today;
+
+      chartData.push({
+        date: dateStr,
+        displayDate: current.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        ideal: Number(ideal.toFixed(1)),
+        remainingEst: isFuture ? null : Number(remainingEst.toFixed(1)),
+        remainingActual: isFuture ? null : Number(remainingActual.toFixed(1))
+      });
+
+      current.setDate(current.getDate() + 1);
+      dayIndex++;
+    }
+
+    successResponse(res, chartData);
+  } catch (err) {
+    console.error("getSprintBurndown:", err);
+    errorResponse(res, err.message);
+  }
+};
