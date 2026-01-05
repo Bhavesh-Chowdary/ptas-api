@@ -78,9 +78,10 @@ const checkDeveloperLoad = async (assignee_id, sprint_id, current_task_id = null
   const q = `
     SELECT SUM(potential_points) as total_points, SUM(target_hours) as total_hours
     FROM tasks
-    WHERE assignee_id = $1 AND sprint_id = $2 AND id != $3
+    WHERE assignee_id = $1 AND sprint_id = $2 
+    AND ($3::text IS NULL OR id::text != $3::text)
   `;
-  const { rows } = await pool.query(q, [assignee_id, sprint_id, current_task_id || -1]);
+  const { rows } = await pool.query(q, [assignee_id, sprint_id, current_task_id]);
   return {
     points: parseInt(rows[0].total_points || 0),
     hours: parseFloat(rows[0].total_hours || 0)
@@ -112,7 +113,10 @@ export const createTask = async (req, res) => {
     const { userId, role } = req.user;
 
     // Enforce Project Membership
-    if (role.toLowerCase() === 'developer' && Number(assignee_id) !== Number(userId)) {
+    const normalRole = (role || "").toLowerCase();
+    const canBypassMembership = normalRole === 'admin' || normalRole === 'project manager';
+
+    if (normalRole === 'developer' && Number(assignee_id) !== Number(userId)) {
       return errorResponse(res, "Developers can only create tasks assigned to themselves.", 403);
     }
 
@@ -122,7 +126,7 @@ export const createTask = async (req, res) => {
       [project_id, userId]
     );
 
-    if (!memberCheck.rowCount && !["admin", "Project Manager"].includes(role)) {
+    if (!memberCheck.rowCount && !canBypassMembership) {
       return errorResponse(res, "Not part of this project", 403);
     }
 
@@ -269,8 +273,11 @@ export const getTasks = async (req, res) => {
     }
 
     if (role === "Project Manager" || role === "pm") {
-      filters.push(`p.manager_id = $${params.length + 1}`);
-      params.push(userId);
+      // If PM is global or part of all projects, we can either filter by manager_id 
+      // or allow all if they are 'admin'. 
+      // The user says PM is part of all, so let's allow all for PM too.
+      // filters.push(`p.manager_id = $${params.length + 1}`);
+      // params.push(userId);
     }
 
     const { project_id, sprint_id } = req.query;
@@ -336,7 +343,7 @@ export const updateTask = async (req, res) => {
     const before = beforeRes.rows[0];
 
     const userRole = (role || "").toLowerCase();
-    const canManageAll = userRole === "admin" || role === "Project Manager"; // PM is often mixed case in this DB
+    const canManageAll = userRole === "admin" || userRole === "project manager";
 
     if (userRole === "developer" && Number(before.assignee_id) !== Number(userId)) {
       return errorResponse(res, "Developers can only edit tasks assigned to themselves.", 403);
@@ -527,7 +534,8 @@ export const deleteTask = async (req, res) => {
 
     if (!id) return errorResponse(res, "Task id is required", 400);
 
-    if (!["admin", "Project Manager", "developer"].includes(role)) {
+    const userRole = (role || "").toLowerCase();
+    if (!["admin", "project manager", "developer"].includes(userRole)) {
       return errorResponse(res, "Not allowed to delete tasks", 403);
     }
 

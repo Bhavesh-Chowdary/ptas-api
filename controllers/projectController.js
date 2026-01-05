@@ -109,7 +109,8 @@ export const createProject = async (req, res) => {
     const project = projectRes.rows[0];
 
     /* ---- MEMBERS ---- */
-    for (const uid of members) {
+    const allMembers = Array.from(new Set([...members, userId]));
+    for (const uid of allMembers) {
       await pool.query(
         `
         INSERT INTO project_members (project_id, user_id)

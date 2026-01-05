@@ -7,13 +7,18 @@ import authRoutes from './routes/authRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
 import taskRoutes from './routes/taskRoutes.js';
 import moduleRoutes from './routes/moduleRoutes.js';
-import sprintRoutes from './routes/sprintRoutes.js';
-import timesheetRoutes from './routes/timesheetRoutes.js';
-import reportRoutes from './routes/reportRoutes.js';
 import changeLogRoutes from './routes/changeLogRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import sprintRoutes from './routes/sprintRoutes.js';
+import timesheetRoutes from './routes/timesheetRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 import noteRoutes from './routes/noteRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import { initNotificationsTable } from './controllers/notificationController.js';
+
+// Init DB
+initNotificationsTable();
 
 dotenv.config();
 
@@ -35,6 +40,7 @@ app.use('/api/change-logs', changeLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/users', userRoutes);//
 app.use('/api/notes', noteRoutes);//
+app.use('/api/notifications', notificationRoutes);
 
 // Health check
 app.get('/health', async (req, res) => {

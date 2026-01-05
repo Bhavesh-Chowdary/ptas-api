@@ -59,13 +59,12 @@ export const getNextSprintNumber = async (req, res) => {
       return errorResponse(res, "project_id is required", 400);
     }
 
-    const count = await pool.query(
-      "SELECT COUNT(*) FROM sprints WHERE project_id = $1",
+    const maxResult = await pool.query(
+      "SELECT MAX(sprint_number) as max_num FROM sprints WHERE project_id = $1",
       [project_id]
     );
 
-    // logic matches createSprint: count + 1
-    const nextNum = Number(count.rows[0].count) + 1;
+    const nextNum = (maxResult.rows[0].max_num || 0) + 1;
 
     successResponse(res, { next_number: nextNum });
   } catch (err) {
@@ -289,7 +288,8 @@ export const getSprintHierarchy = async (req, res) => {
 
     successResponse(res, {
       sprint,
-      modules: hierarchy
+      modules: hierarchy,
+      tasks: tasks // flat list for FlowGraph
     });
   } catch (err) {
     console.error("getSprintHierarchy:", err);

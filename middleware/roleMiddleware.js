@@ -6,11 +6,23 @@ export const permit = (...allowedRoles) => {
     }
 
     // Normalize user role from legacy values if not already normal
-    let userRole = req.user.role;
-    if (userRole === 'pm') userRole = 'Project Manager';
-    if (userRole === 'administrator') userRole = 'admin';
+    let userRole = (req.user.role || '').toLowerCase();
+    if (userRole === 'pm' || userRole === 'project manager') userRole = 'Project Manager';
+    else if (userRole === 'administrator' || userRole === 'admin') userRole = 'admin';
+    else if (userRole === 'developer') userRole = 'Developer';
+    else if (userRole === 'qa') userRole = 'QA';
+    else userRole = userRole.charAt(0).toUpperCase() + userRole.slice(1);
 
-    if (!allowedRoles.includes(userRole)) {
+    const normalizedAllowed = allowedRoles.map(r => {
+      const low = r.toLowerCase();
+      if (low === 'pm' || low === 'project manager') return 'Project Manager';
+      if (low === 'developer') return 'Developer';
+      if (low === 'admin') return 'admin';
+      if (low === 'qa') return 'QA';
+      return r;
+    });
+
+    if (!normalizedAllowed.includes(userRole)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
