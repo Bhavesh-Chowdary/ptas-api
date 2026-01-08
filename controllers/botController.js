@@ -11,75 +11,92 @@ const groq = new Groq({
 export const askBot = async (req, res) => {
     try {
         const { query } = req.body;
+        // For the bot, we'll fetch data as an admin to see everything, OR user context if specific rules apply.
+        // For simplicity in this demo, accessing all data to answer general questions.
+        // In production, pass req.user.id to filter like dashboardController does.
 
-        // Fetch context data
-        // For a demo, we'll strip down the data to essential fields to save tokens
-
-        // 1. Projects
+        // 1. PROJECTS with status metrics (Adapted from dashboardController.getActiveProjects)
         const projectsRes = await pool.query(`
-            SELECT id, name, status, start_date, end_date, budget 
-            FROM projects
+          SELECT p.id, p.name, p.status, p.start_date, p.end_date, 
+            COUNT(t.id) as total_tasks,
+            COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
+            COALESCE(SUM(t.potential_points), 0) as total_points
+          FROM projects p
+          LEFT JOIN tasks t ON t.project_id = p.id
+          WHERE p.status = 'active'
+          GROUP BY p.id
         `);
 
-        // 2. Tasks (limit to recent or active to avoid huge payload, or just all for small demo DB)
-        const tasksRes = await pool.query(`
-            SELECT t.id, t.title, t.status, t.priority, t.start_date, t.end_date, 
-                   u.name as assignee_name, p.name as project_name
-            FROM tasks t
-            LEFT JOIN users u ON t.assignee_id = u.id
-            LEFT JOIN projects p ON t.project_id = p.id
-            WHERE t.status != 'Done' OR t.updated_at > NOW() - INTERVAL '30 days'
-        `);
-
-        // 3. Sprints
+        // 2. ACTIVE SPRINTS (Adapted from dashboardController.getActiveSprints)
         const sprintsRes = await pool.query(`
-            SELECT s.id, s.name, s.status, s.start_date, s.end_date, p.name as project_name
-            FROM sprints s
-            LEFT JOIN projects p ON s.project_id = p.id
+          SELECT s.name, s.status, s.start_date, s.end_date, p.name as project_name,
+            (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id) as total_sprint_tasks,
+            (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) IN ('done', 'completed')) as completed_sprint_tasks
+          FROM sprints s
+          JOIN projects p ON p.id = s.project_id
+          WHERE s.status = 'active'
         `);
 
-        // 4. Users/Utilization (Mocking utilization for now based on task count)
-        const usersRes = await pool.query(`
-            SELECT id, name, role, email FROM users
+        // 3. UPCOMING DEADLINES / RISKS (Adapted from dashboardController.getUpcomingDeadlines)
+        const deadlinesRes = await pool.query(`
+            SELECT t.title, t.priority, t.end_datetime, t.status, p.name as project_name, u.full_name as assignee
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            LEFT JOIN users u ON u.id = t.assignee_id
+            WHERE t.end_datetime >= CURRENT_DATE AND t.end_datetime <= (CURRENT_DATE + INTERVAL '7 days')
+            AND t.status != 'done'
+            ORDER BY t.end_datetime ASC
+            LIMIT 15
         `);
 
-        // Construct Context
+        // 4. TEAM UTILIZATION (New query mimicking timeline/workload logic)
+        const teamRes = await pool.query(`
+            SELECT u.full_name, u.role,
+                COUNT(t.id) as active_tasks
+            FROM users u
+            LEFT JOIN tasks t ON t.assignee_id = u.id AND t.status NOT IN ('done', 'completed', 'cancelled')
+            WHERE u.status = 'active'
+            GROUP BY u.id
+        `);
+
+        // Assemble Context
         const contextData = {
-            projects: projectsRes.rows,
-            active_tasks: tasksRes.rows,
-            sprints: sprintsRes.rows,
-            team_members: usersRes.rows
+            projects_summary: projectsRes.rows,
+            active_sprints: sprintsRes.rows,
+            urgent_tasks_this_week: deadlinesRes.rows,
+            team_workload: teamRes.rows
         };
 
         const systemPrompt = `
-You are ProjectBot, an intelligent and helpful project management assistant for the "RedSage" team.
-You have access to the current real-time data of the project management system provided below in JSON format.
+You are ProjectBot, an advanced AI project manager for "RedSage".
+You have "Read-Only" access to the entire project database.
+Below is the real-time snapshot of the organization:
 
-CONTEXT DATA:
+DATA SNAPSHOT:
 ${JSON.stringify(contextData)}
 
-YOUR ROLE:
-- Answer questions about project status, tasks, deadlines, team workload, and sprints.
-- Provide summaries and insights.
-- Be concise, professional, and friendly.
-- If you don't know the answer based on the data, say "I don't have that information right now."
-- If the user asks for "at-risk" projects, look for projects with low progress but close deadlines or past deadlines.
-- If user asks about "utilization", estimate based on assigned tasks (e.g. 0-2 tasks is low, 3-5 is medium, 5+ is high).
+INSTRUCTIONS:
+- Analyze the data to answer the user's question.
+- If asked about "status", refer to project completion rates (tasks done / total).
+- If asked about "risks", look for high priority tasks due soon or sprints with low completion.
+- If asked about "workload", check team_members active task counts.
+- Keep answers professional, concise, and insightful. 
+- Do NOT hallucinate data not present in the snapshot.
 
-Answer the following user query based on the context above.
-        `;
+User Query: ${query}
+`;
 
         const completion = await groq.chat.completions.create({
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: query }
             ],
-            model: "llama3-8b-8192", // Faster, lightweight model
-            temperature: 0.3,
+            model: "llama3-8b-8192",
+            temperature: 0.1, // Very precise
             max_tokens: 512,
         });
 
-        const answer = completion.choices[0]?.message?.content || "I couldn't process your request.";
+        const answer = completion.choices[0]?.message?.content || "I couldn't generate an answer.";
 
         res.json({
             success: true,
@@ -87,11 +104,11 @@ Answer the following user query based on the context above.
         });
 
     } catch (error) {
-        console.error("Bot Error:", error);
+        console.error("Bot Logic Error:", error);
         res.status(500).json({
             success: false,
-            error: error.message || "Failed to get response from bot.",
-            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            error: "I encountered an error processing your request.",
+            details: error.message
         });
     }
 };
