@@ -17,7 +17,7 @@ export const askBot = async (req, res) => {
 
         // 1. Projects
         const projectsRes = await pool.query(`
-            SELECT id, name, status, start_date, end_date, progress, budget 
+            SELECT id, name, status, start_date, end_date, budget 
             FROM projects
         `);
 
