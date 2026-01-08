@@ -74,9 +74,9 @@ Answer the following user query based on the context above.
                 { role: "system", content: systemPrompt },
                 { role: "user", content: query }
             ],
-            model: "llama3-70b-8192",
-            temperature: 0.5,
-            max_tokens: 1024,
+            model: "llama3-8b-8192", // Faster, lightweight model
+            temperature: 0.3,
+            max_tokens: 512,
         });
 
         const answer = completion.choices[0]?.message?.content || "I couldn't process your request.";
