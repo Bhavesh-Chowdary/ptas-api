@@ -116,7 +116,7 @@ export const createTask = async (req, res) => {
     const normalRole = (role || "").toLowerCase();
     const canBypassMembership = normalRole === 'admin' || normalRole === 'project manager';
 
-    if (normalRole === 'developer' && Number(assignee_id) !== Number(userId)) {
+    if (normalRole === 'developer' && String(assignee_id) !== String(userId)) {
       return errorResponse(res, "Developers can only create tasks assigned to themselves.", 403);
     }
 
@@ -261,7 +261,9 @@ export const getTasks = async (req, res) => {
     const params = [];
     const filters = [];
 
-    if (role === "developer" || role === "DEVELOPER") {
+    const userRole = (role || "").toLowerCase();
+
+    if (userRole === "developer") {
       filters.push(`(t.assignee_id = $${params.length + 1}
            OR EXISTS (
              SELECT 1
@@ -272,7 +274,7 @@ export const getTasks = async (req, res) => {
       params.push(userId);
     }
 
-    if (role === "Project Manager" || role === "pm") {
+    if (userRole === "project manager" || userRole === "pm") {
       // If PM is global or part of all projects, we can either filter by manager_id 
       // or allow all if they are 'admin'. 
       // The user says PM is part of all, so let's allow all for PM too.
@@ -345,7 +347,7 @@ export const updateTask = async (req, res) => {
     const userRole = (role || "").toLowerCase();
     const canManageAll = userRole === "admin" || userRole === "project manager";
 
-    if (userRole === "developer" && Number(before.assignee_id) !== Number(userId)) {
+    if (userRole === "developer" && String(before.assignee_id) !== String(userId)) {
       return errorResponse(res, "Developers can only edit tasks assigned to themselves.", 403);
     }
 
@@ -369,7 +371,7 @@ export const updateTask = async (req, res) => {
     } = req.body;
 
     // Developer Restriction: Cannot change assignee
-    if (userRole === "developer" && assignee_id && Number(assignee_id) !== Number(userId)) {
+    if (userRole === "developer" && assignee_id && String(assignee_id) !== String(userId)) {
       return errorResponse(res, "Developers cannot reassign tasks to others.", 403);
     }
     const targetAssignee = assignee_id || before.assignee_id;
