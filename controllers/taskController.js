@@ -46,7 +46,8 @@ const generateTaskCode = async (
   const projId = (proj.project_code || 'PROJ').split('/')[0].toUpperCase();
 
   // 3. resource serial (from users table)
-  const resourcePart = String(resSerial);
+  // 3. resource serial (from users table)
+  const resourcePart = 'R' + String(resSerial);
 
   // 4. version (V1, V2...)
   let version = String(proj.version || '1').toUpperCase();
