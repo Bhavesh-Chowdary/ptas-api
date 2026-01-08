@@ -17,46 +17,57 @@ export const askBot = async (req, res) => {
 
         // 1. PROJECTS with status metrics (Adapted from dashboardController.getActiveProjects)
         const projectsRes = await pool.query(`
-          SELECT p.id, p.name, p.status, p.start_date, p.end_date, 
+          SELECT p.id, p.name, p.status, p.start_date, p.end_date, p.color,
             COUNT(t.id) as total_tasks,
             COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
-            COALESCE(SUM(t.potential_points), 0) as total_points
+            COALESCE(SUM(t.potential_points), 0) as total_points,
+            COALESCE(SUM(t.potential_points) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')), 0) as completed_points
           FROM projects p
           LEFT JOIN tasks t ON t.project_id = p.id
           WHERE p.status = 'active'
           GROUP BY p.id
+          ORDER BY p.created_at DESC
         `);
 
         // 2. ACTIVE SPRINTS (Adapted from dashboardController.getActiveSprints)
         const sprintsRes = await pool.query(`
-          SELECT s.name, s.status, s.start_date, s.end_date, p.name as project_name,
-            (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id) as total_sprint_tasks,
-            (SELECT COUNT(*) FROM tasks t WHERE t.sprint_id = s.id AND LOWER(t.status) IN ('done', 'completed')) as completed_sprint_tasks
+          SELECT s.id, s.name, s.status, s.start_date, s.end_date, s.sprint_number,
+            p.name as project_name, p.color as project_color,
+            COUNT(t.id) as total_tasks,
+            COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
+            COALESCE(SUM(t.potential_points), 0) as total_points
           FROM sprints s
           JOIN projects p ON p.id = s.project_id
+          LEFT JOIN tasks t ON t.sprint_id = s.id
           WHERE s.status = 'active'
+          GROUP BY s.id, p.name, p.color
+          ORDER BY s.end_date ASC
         `);
 
         // 3. UPCOMING DEADLINES / RISKS (Adapted from dashboardController.getUpcomingDeadlines)
         const deadlinesRes = await pool.query(`
-            SELECT t.title, t.priority, t.end_datetime, t.status, p.name as project_name, u.full_name as assignee
+            SELECT t.id, t.title, t.priority, t.end_datetime, t.end_date, t.status, 
+                   p.name as project_name, u.full_name as assignee_name
             FROM tasks t
             JOIN projects p ON p.id = t.project_id
             LEFT JOIN users u ON u.id = t.assignee_id
-            WHERE t.end_datetime >= CURRENT_DATE AND t.end_datetime <= (CURRENT_DATE + INTERVAL '7 days')
-            AND t.status != 'done'
-            ORDER BY t.end_datetime ASC
+            WHERE (t.end_datetime >= CURRENT_DATE OR t.end_date >= CURRENT_DATE)
+            AND LOWER(t.status) NOT IN ('done', 'completed')
+            ORDER BY COALESCE(t.end_datetime, t.end_date::timestamp) ASC
             LIMIT 15
         `);
 
-        // 4. TEAM UTILIZATION (New query mimicking timeline/workload logic)
+        // 4. TEAM UTILIZATION - Fixed to use is_active instead of status
         const teamRes = await pool.query(`
-            SELECT u.full_name, u.role,
-                COUNT(t.id) as active_tasks
+            SELECT u.id, u.full_name, u.role, u.email,
+                COUNT(t.id) as active_tasks,
+                COALESCE(SUM(t.potential_points), 0) as total_points
             FROM users u
-            LEFT JOIN tasks t ON t.assignee_id = u.id AND t.status NOT IN ('done', 'completed', 'cancelled')
-            WHERE u.status = 'active'
-            GROUP BY u.id
+            LEFT JOIN tasks t ON t.assignee_id = u.id 
+                AND LOWER(t.status) NOT IN ('done', 'completed', 'cancelled')
+            WHERE u.is_active = true
+            GROUP BY u.id, u.full_name, u.role, u.email
+            ORDER BY active_tasks DESC
         `);
 
         // Assemble Context
@@ -68,22 +79,25 @@ export const askBot = async (req, res) => {
         };
 
         const systemPrompt = `
-You are ProjectBot, an advanced AI project manager for "RedSage".
-You have "Read-Only" access to the entire project database.
-Below is the real-time snapshot of the organization:
+You are ProjectBot, an advanced AI project management assistant for "RedSage PTAS".
+You have read-only access to the entire project database and can provide insights about projects, sprints, tasks, and team workload.
 
-DATA SNAPSHOT:
-${JSON.stringify(contextData)}
+CURRENT DATA SNAPSHOT:
+${JSON.stringify(contextData, null, 2)}
 
 INSTRUCTIONS:
-- Analyze the data to answer the user's question.
-- If asked about "status", refer to project completion rates (tasks done / total).
-- If asked about "risks", look for high priority tasks due soon or sprints with low completion.
-- If asked about "workload", check team_members active task counts.
-- Keep answers professional, concise, and insightful. 
-- Do NOT hallucinate data not present in the snapshot.
+- Analyze the data snapshot to answer the user's question accurately.
+- For PROJECT STATUS: Calculate completion as (completed_tasks / total_tasks * 100). Also mention completed_points vs total_points if relevant.
+- For SPRINT STATUS: Use total_tasks and completed_tasks. Mention sprint_number and dates.
+- For RISKS/BLOCKERS: Look for high priority tasks with approaching deadlines, or sprints/projects with low completion rates.
+- For TEAM WORKLOAD: Check active_tasks count and total_points per team member. Identify overloaded or underutilized members.
+- For DEADLINES: Reference the urgent_tasks_this_week array for upcoming tasks.
+- Keep answers concise (2-3 sentences), professional, and data-driven.
+- If data is missing or insufficient, acknowledge it clearly.
+- DO NOT hallucinate or make up data not present in the snapshot.
+- Use bullet points for lists when appropriate.
 
-User Query: ${query}
+User Question: ${query}
 `;
 
         const completion = await groq.chat.completions.create({
