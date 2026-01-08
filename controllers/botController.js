@@ -88,6 +88,10 @@ Answer the following user query based on the context above.
 
     } catch (error) {
         console.error("Bot Error:", error);
-        res.status(500).json({ success: false, error: "Failed to get response from bot." });
+        res.status(500).json({
+            success: false,
+            error: error.message || "Failed to get response from bot.",
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 };
