@@ -105,9 +105,9 @@ User Question: ${query}
                 { role: "system", content: systemPrompt },
                 { role: "user", content: query }
             ],
-            model: "llama3-8b-8192",
+            model: "llama-3.1-8b-instant",
             temperature: 0.1, // Very precise
-            max_tokens: 512,
+            max_tokens: 1024,
         });
 
         const answer = completion.choices[0]?.message?.content || "I couldn't generate an answer.";
