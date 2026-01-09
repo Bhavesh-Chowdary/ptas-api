@@ -58,8 +58,19 @@ const formatLog = (log) => {
 };
 
 export const getChangeLogs = async (req, res) => {
+  console.log("\n\n🔍 getChangeLogs CALLED");
+  console.log("Raw req.query:", JSON.stringify(req.query, null, 2));
+
   try {
-    const { entity_type, entity_id } = req.query;
+    const {
+      entity_type,
+      entity_id,
+      project_id,
+      sprint_id,
+      member_id,
+      start_date,
+      end_date
+    } = req.query;
 
     let q = `
       SELECT c.*, u.full_name AS user_name
@@ -67,6 +78,7 @@ export const getChangeLogs = async (req, res) => {
       LEFT JOIN users u ON u.id = c.changed_by
       WHERE 1=1
     `;
+    console.log("ChangeLogs Request Query:", req.query);
     const params = [];
 
     if (entity_type) {
@@ -77,12 +89,49 @@ export const getChangeLogs = async (req, res) => {
       params.push(entity_id);
       q += ` AND c.entity_id = $${params.length}`;
     }
+    if (member_id && member_id !== 'all') {
+      params.push(member_id);
+      q += ` AND c.changed_by = $${params.length}::uuid`;
+    }
+    if (project_id && project_id !== 'all') {
+      params.push(project_id);
+      const idx = params.length;
+      q += ` AND (
+        (c.entity_type = 'project' AND c.entity_id::text = $${idx}::text)
+        OR (c.after_data->>'project_id' = $${idx}::text)
+        OR (c.before_data->>'project_id' = $${idx}::text)
+      )`;
+    }
+    if (sprint_id && sprint_id !== 'all') {
+      params.push(sprint_id);
+      const idx = params.length;
+      q += ` AND (
+        (c.entity_type = 'sprint' AND c.entity_id::text = $${idx}::text)
+        OR (c.after_data->>'sprint_id' = $${idx}::text)
+        OR (c.before_data->>'sprint_id' = $${idx}::text)
+      )`;
+    }
+    if (start_date) {
+      params.push(start_date);
+      q += ` AND c.changed_at >= $${params.length}`;
+    }
+    if (end_date) {
+      params.push(end_date);
+      q += ` AND c.changed_at <= $${params.length}`;
+    }
 
     q += ` ORDER BY c.changed_at DESC`;
+    console.log("=== CHANGE LOGS QUERY DEBUG ===");
+    console.log("Request Query Params:", req.query);
+    console.log("SQL Query:", q);
+    console.log("SQL Params:", params);
+    console.log("================================");
 
     const { rows } = await pool.query(q, params);
+    console.log(`Returned ${rows.length} log entries`);
     successResponse(res, rows.map(formatLog));
   } catch (err) {
+    console.error("getChangeLogs Error:", err);
     errorResponse(res, err.message);
   }
 };
