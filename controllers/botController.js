@@ -97,13 +97,29 @@ INSTRUCTIONS:
 - If data is missing or insufficient, acknowledge it clearly.
 - DO NOT hallucinate or make up data not present in the snapshot.
 
-FORMATTING RULES (CRITICAL):
-- DO NOT use markdown syntax like ** for bold or * for italics in your response
-- DO NOT show mathematical calculations or formulas - only show the final answer
-- Use plain text with clear structure
-- Use bullet points with simple dashes (-) or numbers for lists
-- Provide direct, clean answers without formatting symbols
-- Example: Instead of "**Overloaded:** Bhavesh (5 tasks)", write "Overloaded: Bhavesh (5 tasks)"
+CRITICAL FORMATTING REQUIREMENTS - YOU MUST FOLLOW THESE EXACTLY:
+- NEVER use ** or __ for bold text
+- NEVER use * or _ for italic text
+- NEVER use # for headers
+- NEVER use any markdown formatting symbols
+- Write in PLAIN TEXT ONLY
+- For emphasis, use CAPITAL LETTERS or write the word normally
+- For lists, use simple dashes (-) or numbers (1., 2., 3.)
+- For sections, use simple text labels followed by a colon (:)
+
+CORRECT FORMAT EXAMPLES:
+✓ "Project Status: HRMS is active"
+✓ "Completion Rate: 0%"
+✓ "Sprint Status: Sprint 1 is active"
+✓ "Team Workload Analysis:"
+✓ "- Overloaded: Bhavesh (5 tasks, 15 points)"
+✓ "- Underutilized: Sai Tejas (0 tasks)"
+
+INCORRECT FORMAT EXAMPLES (DO NOT USE):
+✗ "**Project Status:** HRMS is active"
+✗ "**Completion Rate:** 0%"
+✗ "## Sprint Status"
+✗ "*Sprint 1* is active"
 
 User Question: ${query}
 `;
@@ -118,7 +134,16 @@ User Question: ${query}
             max_tokens: 1024,
         });
 
-        const answer = completion.choices[0]?.message?.content || "I couldn't generate an answer.";
+        let answer = completion.choices[0]?.message?.content || "I couldn't generate an answer.";
+
+        // Post-process to remove any markdown formatting that slipped through
+        answer = answer
+            .replace(/\*\*([^*]+)\*\*/g, '$1')  // Remove **bold**
+            .replace(/\*([^*]+)\*/g, '$1')      // Remove *italic*
+            .replace(/__([^_]+)__/g, '$1')      // Remove __bold__
+            .replace(/_([^_]+)_/g, '$1')        // Remove _italic_
+            .replace(/^#{1,6}\s+/gm, '')        // Remove # headers
+            .replace(/`([^`]+)`/g, '$1');       // Remove `code`
 
         res.json({
             success: true,
