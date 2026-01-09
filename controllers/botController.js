@@ -57,7 +57,7 @@ export const askBot = async (req, res) => {
             LIMIT 15
         `);
 
-        // 4. TEAM UTILIZATION - Fixed to use is_active instead of status
+        // 4. TEAM UTILIZATION - Exclude Project Managers (they manage, not execute tasks)
         const teamRes = await pool.query(`
             SELECT u.id, u.full_name, u.role, u.email,
                 COUNT(t.id) as active_tasks,
@@ -65,7 +65,8 @@ export const askBot = async (req, res) => {
             FROM users u
             LEFT JOIN tasks t ON t.assignee_id = u.id 
                 AND LOWER(t.status) NOT IN ('done', 'completed', 'cancelled')
-            WHERE u.is_active = true
+            WHERE u.is_active = true 
+                AND u.role != 'Project Manager'
             GROUP BY u.id, u.full_name, u.role, u.email
             ORDER BY active_tasks DESC
         `);
@@ -90,12 +91,35 @@ INSTRUCTIONS:
 - For PROJECT STATUS: Calculate completion as (completed_tasks / total_tasks * 100). Also mention completed_points vs total_points if relevant.
 - For SPRINT STATUS: Use total_tasks and completed_tasks. Mention sprint_number and dates.
 - For RISKS/BLOCKERS: Look for high priority tasks with approaching deadlines, or sprints/projects with low completion rates.
-- For TEAM WORKLOAD: Check active_tasks count and total_points per team member. Identify overloaded or underutilized members.
+- For TEAM WORKLOAD: Check active_tasks count and total_points per team member. Identify overloaded (4+ tasks or 12+ points) or underutilized (0 tasks) members. Note: Project Managers are excluded from task assignments.
 - For DEADLINES: Reference the urgent_tasks_this_week array for upcoming tasks.
-- Keep answers concise (2-3 sentences), professional, and data-driven.
+- Keep answers concise, professional, and data-driven.
 - If data is missing or insufficient, acknowledge it clearly.
 - DO NOT hallucinate or make up data not present in the snapshot.
-- Use bullet points for lists when appropriate.
+
+CRITICAL FORMATTING REQUIREMENTS - YOU MUST FOLLOW THESE EXACTLY:
+- NEVER use ** or __ for bold text
+- NEVER use * or _ for italic text
+- NEVER use # for headers
+- NEVER use any markdown formatting symbols
+- Write in PLAIN TEXT ONLY
+- For emphasis, use CAPITAL LETTERS or write the word normally
+- For lists, use simple dashes (-) or numbers (1., 2., 3.)
+- For sections, use simple text labels followed by a colon (:)
+
+CORRECT FORMAT EXAMPLES:
+✓ "Project Status: HRMS is active"
+✓ "Completion Rate: 0%"
+✓ "Sprint Status: Sprint 1 is active"
+✓ "Team Workload Analysis:"
+✓ "- Overloaded: Bhavesh (5 tasks, 15 points)"
+✓ "- Underutilized: Sai Tejas (0 tasks)"
+
+INCORRECT FORMAT EXAMPLES (DO NOT USE):
+✗ "**Project Status:** HRMS is active"
+✗ "**Completion Rate:** 0%"
+✗ "## Sprint Status"
+✗ "*Sprint 1* is active"
 
 User Question: ${query}
 `;
@@ -110,7 +134,16 @@ User Question: ${query}
             max_tokens: 1024,
         });
 
-        const answer = completion.choices[0]?.message?.content || "I couldn't generate an answer.";
+        let answer = completion.choices[0]?.message?.content || "I couldn't generate an answer.";
+
+        // Post-process to remove any markdown formatting that slipped through
+        answer = answer
+            .replace(/\*\*([^*]+)\*\*/g, '$1')  // Remove **bold**
+            .replace(/\*([^*]+)\*/g, '$1')      // Remove *italic*
+            .replace(/__([^_]+)__/g, '$1')      // Remove __bold__
+            .replace(/_([^_]+)_/g, '$1')        // Remove _italic_
+            .replace(/^#{1,6}\s+/gm, '')        // Remove # headers
+            .replace(/`([^`]+)`/g, '$1');       // Remove `code`
 
         res.json({
             success: true,

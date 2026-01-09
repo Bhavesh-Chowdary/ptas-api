@@ -204,3 +204,59 @@ export const getWeeklyStats = async (req, res) => {
         errorResponse(res, err.message);
     }
 };
+
+/**
+ * GET /dashboard/team-workload
+ * Returns team workload balance - active tasks and points per team member
+ * Note: Project Managers are excluded from task assignments as they manage projects
+ */
+export const getTeamWorkload = async (req, res) => {
+    try {
+        const { userId, role } = req.user;
+        const isAdmin = ["admin", "Project Manager"].includes(role);
+
+        // Only PM/Admin can view team workload
+        if (!isAdmin) {
+            return errorResponse(res, "Access denied. Only Project Managers and Admins can view team workload.", 403);
+        }
+
+        const q = `
+            SELECT 
+                u.id, 
+                u.full_name as name, 
+                u.role, 
+                u.email,
+                COUNT(t.id) as active_tasks,
+                COALESCE(SUM(t.potential_points), 0) as total_points
+            FROM users u
+            LEFT JOIN tasks t ON t.assignee_id = u.id 
+                AND LOWER(t.status) NOT IN ('done', 'completed', 'cancelled')
+            WHERE u.is_active = true 
+                AND u.role != 'Project Manager'
+            GROUP BY u.id, u.full_name, u.role, u.email
+            ORDER BY active_tasks DESC, total_points DESC
+        `;
+
+        const { rows } = await pool.query(q);
+
+        // Add workload classification
+        const workloadData = rows.map(member => {
+            let workloadStatus = 'balanced';
+            if (member.active_tasks >= 4 || member.total_points >= 12) {
+                workloadStatus = 'overloaded';
+            } else if (member.active_tasks === 0) {
+                workloadStatus = 'underutilized';
+            }
+
+            return {
+                ...member,
+                workload_status: workloadStatus
+            };
+        });
+
+        successResponse(res, workloadData);
+    } catch (err) {
+        console.error("getTeamWorkload error:", err);
+        errorResponse(res, err.message);
+    }
+};
