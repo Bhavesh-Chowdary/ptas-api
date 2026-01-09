@@ -5,7 +5,8 @@ import {
     getActiveSprints,
     getUpcomingDeadlines,
     getTimelineData,
-    getWeeklyStats
+    getWeeklyStats,
+    getTeamWorkload
 } from "../controllers/dashboardController.js";
 
 const router = express.Router();
@@ -17,5 +18,6 @@ router.get("/active-sprints", getActiveSprints);
 router.get("/upcoming-deadlines", getUpcomingDeadlines);
 router.get("/timeline", getTimelineData);
 router.get("/weekly-stats", getWeeklyStats);
+router.get("/team-workload", getTeamWorkload);
 
 export default router;

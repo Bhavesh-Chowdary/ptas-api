@@ -57,7 +57,7 @@ export const askBot = async (req, res) => {
             LIMIT 15
         `);
 
-        // 4. TEAM UTILIZATION - Fixed to use is_active instead of status
+        // 4. TEAM UTILIZATION - Exclude Project Managers (they manage, not execute tasks)
         const teamRes = await pool.query(`
             SELECT u.id, u.full_name, u.role, u.email,
                 COUNT(t.id) as active_tasks,
@@ -65,7 +65,8 @@ export const askBot = async (req, res) => {
             FROM users u
             LEFT JOIN tasks t ON t.assignee_id = u.id 
                 AND LOWER(t.status) NOT IN ('done', 'completed', 'cancelled')
-            WHERE u.is_active = true
+            WHERE u.is_active = true 
+                AND u.role != 'Project Manager'
             GROUP BY u.id, u.full_name, u.role, u.email
             ORDER BY active_tasks DESC
         `);
@@ -90,12 +91,19 @@ INSTRUCTIONS:
 - For PROJECT STATUS: Calculate completion as (completed_tasks / total_tasks * 100). Also mention completed_points vs total_points if relevant.
 - For SPRINT STATUS: Use total_tasks and completed_tasks. Mention sprint_number and dates.
 - For RISKS/BLOCKERS: Look for high priority tasks with approaching deadlines, or sprints/projects with low completion rates.
-- For TEAM WORKLOAD: Check active_tasks count and total_points per team member. Identify overloaded or underutilized members.
+- For TEAM WORKLOAD: Check active_tasks count and total_points per team member. Identify overloaded (4+ tasks or 12+ points) or underutilized (0 tasks) members. Note: Project Managers are excluded from task assignments.
 - For DEADLINES: Reference the urgent_tasks_this_week array for upcoming tasks.
-- Keep answers concise (2-3 sentences), professional, and data-driven.
+- Keep answers concise, professional, and data-driven.
 - If data is missing or insufficient, acknowledge it clearly.
 - DO NOT hallucinate or make up data not present in the snapshot.
-- Use bullet points for lists when appropriate.
+
+FORMATTING RULES (CRITICAL):
+- DO NOT use markdown syntax like ** for bold or * for italics in your response
+- DO NOT show mathematical calculations or formulas - only show the final answer
+- Use plain text with clear structure
+- Use bullet points with simple dashes (-) or numbers for lists
+- Provide direct, clean answers without formatting symbols
+- Example: Instead of "**Overloaded:** Bhavesh (5 tasks)", write "Overloaded: Bhavesh (5 tasks)"
 
 User Question: ${query}
 `;
