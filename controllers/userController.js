@@ -39,3 +39,19 @@ export const getSupervisors = async (req, res) => {
     return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
+
+export const savePlayerId = async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { playerId } = req.body;
+
+    await db("users")
+      .where({ id: userId })
+      .update({ onesignal_player_id: playerId });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("Save Player ID Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
+  }
+};

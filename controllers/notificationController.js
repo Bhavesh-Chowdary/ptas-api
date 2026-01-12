@@ -1,4 +1,5 @@
 import db from "../config/knex.js";
+import { sendPushNotification } from "../utils/oneSignalService.js";
 
 /**
  * Initialize Notifications Table
@@ -127,6 +128,22 @@ export const pushReminder = async (req, res) => {
 
         if (notifications.length > 0) {
             await db("notifications").insert(notifications);
+
+            // Send Push Notification
+            const pushRecipients = await db("users")
+                .whereIn("id", finalRecipients)
+                .whereNotNull("onesignal_player_id")
+                .select("onesignal_player_id");
+
+            if (pushRecipients.length > 0) {
+                const playerIds = pushRecipients.map(u => u.onesignal_player_id);
+                await sendPushNotification({
+                    playerIds,
+                    title: 'New Reminder',
+                    message,
+                    data: { task_id, project_id }
+                });
+            }
         }
 
         return res.status(200).json({ success: true, data: { message: "Reminders pushed successfully" } });
@@ -173,6 +190,17 @@ const refreshAutomaticReminders = async (userId, role) => {
                     message: `${task.title} overdue please complete`,
                     data: JSON.stringify({ task_id: task.id })
                 });
+
+                // Send Push
+                const user = await db("users").select("onesignal_player_id").where("id", userId).first();
+                if (user?.onesignal_player_id) {
+                    await sendPushNotification({
+                        playerIds: [user.onesignal_player_id],
+                        title: "Task Overdue",
+                        message: `${task.title} is overdue`,
+                        data: { task_id: task.id, type: "overdue_task" }
+                    });
+                }
             }
         }
 
@@ -204,6 +232,17 @@ const refreshAutomaticReminders = async (userId, role) => {
                         message: `Tasks pending in ${sprint.name}`,
                         data: JSON.stringify({ sprint_id: sprint.id })
                     });
+
+                    // Send Push
+                    const user = await db("users").select("onesignal_player_id").where("id", userId).first();
+                    if (user?.onesignal_player_id) {
+                        await sendPushNotification({
+                            playerIds: [user.onesignal_player_id],
+                            title: "Sprint Ending Soon",
+                            message: `Tasks pending in ${sprint.name}`,
+                            data: { sprint_id: sprint.id, type: "sprint_end" }
+                        });
+                    }
                 }
             }
         }
