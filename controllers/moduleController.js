@@ -1,6 +1,5 @@
-import pool from "../config/db.js";
+import db from "../config/knex.js";
 import { logChange } from "./changeLogController.js";
-import { successResponse, errorResponse } from "../utils/apiResponse.js";
 
 const allowed = (role) => ["admin", "Project Manager"].includes(role);
 
@@ -9,17 +8,13 @@ const allowed = (role) => ["admin", "Project Manager"].includes(role);
 export const getModules = async (req, res) => {
   try {
     const { project_id } = req.query;
-    const { rows } = await pool.query(
-      `
-      SELECT * FROM modules
-      WHERE ($1::uuid IS NULL OR project_id=$1)
-      ORDER BY module_serial
-      `,
-      [project_id || null]
-    );
-    successResponse(res, rows);
+    let query = db("modules").orderBy("module_serial");
+    if (project_id) query = query.where({ project_id });
+    const modules = await query;
+    return res.status(200).json({ success: true, data: modules });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Modules Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
@@ -28,53 +23,37 @@ export const getModules = async (req, res) => {
 export const createModule = async (req, res) => {
   try {
     const { role, userId } = req.user;
-    if (!allowed(role))
-      return errorResponse(res, "Locked", 403);
+    if (!allowed(role)) {
+      return res.status(403).json({ success: false, error: "Insufficient permissions" });
+    }
 
     const { project_id, name, description } = req.body;
-    if (!project_id || !name || !name.trim())
-      return errorResponse(res, "Invalid module", 400);
+    if (!project_id || !name || !name.trim()) {
+      return res.status(400).json({ success: false, error: "Project ID and Name are required" });
+    }
 
-    const projectRes = await pool.query(
-      `SELECT project_code FROM projects WHERE id=$1`,
-      [project_id]
-    );
+    const project = await db("projects").where({ id: project_id }).select("project_code").first();
+    if (!project) {
+      return res.status(404).json({ success: false, error: "Project not found" });
+    }
 
-    if (projectRes.rowCount === 0)
-      return errorResponse(res, "Project not found", 404);
+    const countRes = await db("modules").where({ project_id }).count("* as count").first();
+    const serial = Number(countRes.count) + 1;
+    const moduleCode = `${project.project_code}M${serial}`;
 
-    const projectCode = projectRes.rows[0].project_code;
+    const [newModule] = await db("modules").insert({
+      project_id,
+      name: name.trim(),
+      module_code: moduleCode,
+      module_serial: serial,
+      description: description || null
+    }).returning("*");
 
-    const count = await pool.query(
-      `SELECT COUNT(*) FROM modules WHERE project_id=$1`,
-      [project_id]
-    );
-
-    const serial = Number(count.rows[0].count) + 1;
-    const moduleCode = `${projectCode}M${serial}`;
-
-    const { rows } = await pool.query(
-      `
-      INSERT INTO modules (project_id, name, module_code, module_serial, description)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *
-      `,
-      [project_id, name.trim(), moduleCode, serial, description || null]
-    );
-
-    /* ---- CHANGE LOG ---- */
-    await logChange(
-      "module",
-      rows[0].id,
-      "created",
-      null,
-      rows[0],
-      userId
-    );
-
-    successResponse(res, rows[0], 201);
+    await logChange("module", newModule.id, "created", null, newModule, userId);
+    return res.status(201).json({ success: true, data: newModule });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Create Module Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
@@ -83,46 +62,33 @@ export const createModule = async (req, res) => {
 export const updateModule = async (req, res) => {
   try {
     const { role, userId } = req.user;
-    if (!allowed(role))
-      return errorResponse(res, "Locked", 403);
+    if (!allowed(role)) {
+      return res.status(403).json({ success: false, error: "Insufficient permissions" });
+    }
 
     const id = req.params.id || req.query.id;
     const { name, description } = req.body;
 
-    if (!name || !name.trim())
-      return errorResponse(res, "Invalid name", 400);
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: "Name is required" });
+    }
 
-    /* ---- BEFORE ---- */
-    const beforeRes = await pool.query(
-      `SELECT * FROM modules WHERE id=$1`,
-      [id]
-    );
-    if (!beforeRes.rowCount)
-      return errorResponse(res, "Module not found", 404);
+    const before = await db("modules").where({ id }).first();
+    if (!before) {
+      return res.status(404).json({ success: false, error: "Module not found" });
+    }
 
-    const { rows } = await pool.query(
-      `
-      UPDATE modules
-      SET name=$1, description=$2, updated_at=NOW()
-      WHERE id=$3
-      RETURNING *
-      `,
-      [name.trim(), description || null, id]
-    );
+    const [updatedModule] = await db("modules").where({ id }).update({
+      name: name.trim(),
+      description: description || null,
+      updated_at: db.fn.now()
+    }).returning("*");
 
-    /* ---- CHANGE LOG ---- */
-    await logChange(
-      "module",
-      id,
-      "updated",
-      beforeRes.rows[0],
-      rows[0],
-      userId
-    );
-
-    successResponse(res, rows[0]);
+    await logChange("module", id, "updated", before, updatedModule, userId);
+    return res.status(200).json({ success: true, data: updatedModule });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Update Module Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
@@ -131,36 +97,23 @@ export const updateModule = async (req, res) => {
 export const deleteModule = async (req, res) => {
   try {
     const { role, userId } = req.user;
-    if (!allowed(role))
-      return errorResponse(res, "Locked", 403);
+    if (!allowed(role)) {
+      return res.status(403).json({ success: false, error: "Insufficient permissions" });
+    }
 
     const id = req.params.id || req.query.id;
+    const before = await db("modules").where({ id }).first();
+    if (!before) {
+      return res.status(404).json({ success: false, error: "Module not found" });
+    }
 
-    /* ---- BEFORE ---- */
-    const beforeRes = await pool.query(
-      `SELECT * FROM modules WHERE id=$1`,
-      [id]
-    );
-    if (!beforeRes.rowCount)
-      return errorResponse(res, "Module not found", 404);
+    await db("modules").where({ id }).del();
+    await logChange("module", id, "deleted", before, null, userId);
 
-    await pool.query(`DELETE FROM modules WHERE id=$1`, [id]);
-
-    /* ---- CHANGE LOG ---- */
-    await logChange(
-      "module",
-      id,
-      "deleted",
-      beforeRes.rows[0],
-      null,
-      userId
-    );
-
-    /* ---- CHANGE LOG ---- */
-
-    successResponse(res, { message: "Deleted" });
+    return res.status(200).json({ success: true, data: { message: "Deleted" } });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Delete Module Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
@@ -169,19 +122,19 @@ export const deleteModule = async (req, res) => {
 export const getModuleById = async (req, res) => {
   try {
     const id = req.params.id || req.query.id;
-    const q = `
-      SELECT m.*, p.name AS project_name
-      FROM modules m
-      LEFT JOIN projects p ON p.id = m.project_id
-      WHERE m.id = $1
-    `;
-    const result = await pool.query(q, [id]);
+    const module = await db("modules as m")
+      .leftJoin("projects as p", "p.id", "m.project_id")
+      .where("m.id", id)
+      .select("m.*", "p.name AS project_name")
+      .first();
 
-    if (result.rowCount === 0)
-      return errorResponse(res, "Module not found", 404);
+    if (!module) {
+      return res.status(404).json({ success: false, error: "Module not found" });
+    }
 
-    successResponse(res, result.rows[0]);
+    return res.status(200).json({ success: true, data: module });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Module By ID Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };

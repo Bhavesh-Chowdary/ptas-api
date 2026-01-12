@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import pool from './config/db.js';
+import db from './config/knex.js';
 import authRoutes from './routes/authRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
 import taskRoutes from './routes/taskRoutes.js';
@@ -45,18 +45,15 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/bot', botRoutes);
 
 // Health check
-app.get('/health', async (req, res) => {
+app.get('/health', async (req, res, next) => {
   try {
-    const r = await pool.query('SELECT NOW()');
+    const r = await db.raw('SELECT NOW()');
     res.json({
       success: true,
       data: { status: 'ok', db_time: r.rows[0].now }
     });
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
+    next(err);
   }
 });
 

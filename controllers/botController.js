@@ -1,5 +1,5 @@
 import Groq from "groq-sdk";
-import pool from '../config/db.js';
+import db from '../config/knex.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -11,72 +11,72 @@ const groq = new Groq({
 export const askBot = async (req, res) => {
     try {
         const { query } = req.body;
-        // For the bot, we'll fetch data as an admin to see everything, OR user context if specific rules apply.
-        // For simplicity in this demo, accessing all data to answer general questions.
-        // In production, pass req.user.id to filter like dashboardController does.
 
-        // 1. PROJECTS with status metrics (Adapted from dashboardController.getActiveProjects)
-        const projectsRes = await pool.query(`
-          SELECT p.id, p.name, p.status, p.start_date, p.end_date, p.color,
-            COUNT(t.id) as total_tasks,
-            COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
-            COALESCE(SUM(t.potential_points), 0) as total_points,
-            COALESCE(SUM(t.potential_points) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')), 0) as completed_points
-          FROM projects p
-          LEFT JOIN tasks t ON t.project_id = p.id
-          WHERE p.status = 'active'
-          GROUP BY p.id
-          ORDER BY p.created_at DESC
-        `);
+        // 1. PROJECTS with status metrics
+        const projects = await db("projects as p")
+            .leftJoin("tasks as t", "t.project_id", "p.id")
+            .where("p.status", "active")
+            .select(
+                "p.id", "p.name", "p.status", "p.start_date", "p.end_date", "p.color",
+                db.raw("COUNT(t.id) as total_tasks"),
+                db.raw("COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks"),
+                db.raw("COALESCE(SUM(t.potential_points), 0) as total_points"),
+                db.raw("COALESCE(SUM(t.potential_points) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')), 0) as completed_points")
+            )
+            .groupBy("p.id")
+            .orderBy("p.created_at", "desc");
 
-        // 2. ACTIVE SPRINTS (Adapted from dashboardController.getActiveSprints)
-        const sprintsRes = await pool.query(`
-          SELECT s.id, s.name, s.status, s.start_date, s.end_date, s.sprint_number,
-            p.name as project_name, p.color as project_color,
-            COUNT(t.id) as total_tasks,
-            COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks,
-            COALESCE(SUM(t.potential_points), 0) as total_points
-          FROM sprints s
-          JOIN projects p ON p.id = s.project_id
-          LEFT JOIN tasks t ON t.sprint_id = s.id
-          WHERE s.status = 'active'
-          GROUP BY s.id, p.name, p.color
-          ORDER BY s.end_date ASC
-        `);
+        // 2. ACTIVE SPRINTS
+        const sprints = await db("sprints as s")
+            .join("projects as p", "p.id", "s.project_id")
+            .leftJoin("tasks as t", "t.sprint_id", "s.id")
+            .where("s.status", "active")
+            .select(
+                "s.id", "s.name", "s.status", "s.start_date", "s.end_date", "s.sprint_number",
+                "p.name as project_name", "p.color as project_color",
+                db.raw("COUNT(t.id) as total_tasks"),
+                db.raw("COUNT(t.id) FILTER (WHERE LOWER(t.status) IN ('done', 'completed')) as completed_tasks"),
+                db.raw("COALESCE(SUM(t.potential_points), 0) as total_points")
+            )
+            .groupBy("s.id", "p.name", "p.color")
+            .orderBy("s.end_date", "asc");
 
-        // 3. UPCOMING DEADLINES / RISKS (Adapted from dashboardController.getUpcomingDeadlines)
-        const deadlinesRes = await pool.query(`
-            SELECT t.id, t.title, t.priority, t.end_datetime, t.end_date, t.status, 
-                   p.name as project_name, u.full_name as assignee_name
-            FROM tasks t
-            JOIN projects p ON p.id = t.project_id
-            LEFT JOIN users u ON u.id = t.assignee_id
-            WHERE (t.end_datetime >= CURRENT_DATE OR t.end_date >= CURRENT_DATE)
-            AND LOWER(t.status) NOT IN ('done', 'completed')
-            ORDER BY COALESCE(t.end_datetime, t.end_date::timestamp) ASC
-            LIMIT 15
-        `);
+        // 3. UPCOMING DEADLINES / RISKS
+        const deadlines = await db("tasks as t")
+            .join("projects as p", "p.id", "t.project_id")
+            .leftJoin("users as u", "u.id", "t.assignee_id")
+            .where(function () {
+                this.where("t.end_datetime", ">=", db.fn.now()).orWhere("t.end_date", ">=", db.fn.now());
+            })
+            .whereNotIn(db.raw("LOWER(t.status)"), ["done", "completed"])
+            .select(
+                "t.id", "t.title", "t.priority", "t.end_datetime", "t.end_date", "t.status",
+                "p.name as project_name", "u.full_name as assignee_name"
+            )
+            .orderByRaw("COALESCE(t.end_datetime, t.end_date::timestamp) ASC")
+            .limit(15);
 
-        // 4. TEAM UTILIZATION - Exclude Project Managers (they manage, not execute tasks)
-        const teamRes = await pool.query(`
-            SELECT u.id, u.full_name, u.role, u.email,
-                COUNT(t.id) as active_tasks,
-                COALESCE(SUM(t.potential_points), 0) as total_points
-            FROM users u
-            LEFT JOIN tasks t ON t.assignee_id = u.id 
-                AND LOWER(t.status) NOT IN ('done', 'completed', 'cancelled')
-            WHERE u.is_active = true 
-                AND u.role != 'Project Manager'
-            GROUP BY u.id, u.full_name, u.role, u.email
-            ORDER BY active_tasks DESC
-        `);
+        // 4. TEAM UTILIZATION
+        const team = await db("users as u")
+            .leftJoin("tasks as t", function () {
+                this.on("t.assignee_id", "=", "u.id").andOnNotIn(db.raw("LOWER(t.status)"), ["done", "completed", "cancelled"]);
+            })
+            .where("u.is_active", true)
+            .whereNot("u.role", "Project Manager")
+            .select(
+                "u.id", "u.full_name", "u.role", "u.email",
+                db.raw("COUNT(t.id) as active_tasks"),
+                db.raw("COALESCE(SUM(t.potential_points), 0) as total_points")
+            )
+            .groupBy("u.id", "u.full_name", "u.role", "u.email")
+            .orderBy("active_tasks", "desc");
 
         // Assemble Context
         const contextData = {
-            projects_summary: projectsRes.rows,
-            active_sprints: sprintsRes.rows,
-            urgent_tasks_this_week: deadlinesRes.rows,
-            team_workload: teamRes.rows
+            projects_summary: projects,
+            active_sprints: sprints,
+            urgent_tasks_this_week: deadlines,
+            team_workload: team
         };
 
         const systemPrompt = `
@@ -130,7 +130,7 @@ User Question: ${query}
                 { role: "user", content: query }
             ],
             model: "llama-3.1-8b-instant",
-            temperature: 0.1, // Very precise
+            temperature: 0.1,
             max_tokens: 1024,
         });
 
@@ -138,24 +138,17 @@ User Question: ${query}
 
         // Post-process to remove any markdown formatting that slipped through
         answer = answer
-            .replace(/\*\*([^*]+)\*\*/g, '$1')  // Remove **bold**
-            .replace(/\*([^*]+)\*/g, '$1')      // Remove *italic*
-            .replace(/__([^_]+)__/g, '$1')      // Remove __bold__
-            .replace(/_([^_]+)_/g, '$1')        // Remove _italic_
-            .replace(/^#{1,6}\s+/gm, '')        // Remove # headers
-            .replace(/`([^`]+)`/g, '$1');       // Remove `code`
+            .replace(/\*\*([^*]+)\*\*/g, '$1')
+            .replace(/\*([^*]+)\*/g, '$1')
+            .replace(/__([^_]+)__/g, '$1')
+            .replace(/_([^_]+)_/g, '$1')
+            .replace(/^#{1,6}\s+/gm, '')
+            .replace(/`([^`]+)`/g, '$1');
 
-        res.json({
-            success: true,
-            answer: answer
-        });
+        return res.status(200).json({ success: true, answer });
 
     } catch (error) {
         console.error("Bot Logic Error:", error);
-        res.status(500).json({
-            success: false,
-            error: "I encountered an error processing your request.",
-            details: error.message
-        });
+        return res.status(500).json({ success: false, error: "I encountered an error processing your request: " + error.message });
     }
 };

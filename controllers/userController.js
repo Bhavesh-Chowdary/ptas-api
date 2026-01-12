@@ -1,47 +1,41 @@
-import pool from '../config/db.js';
-import { successResponse, errorResponse } from "../utils/apiResponse.js";
+import db from "../config/knex.js";
 
 export const getUsers = async (req, res) => {
   try {
-    let q = `
-      SELECT id, full_name, email, role, is_active, created_at
-      FROM users
-      ORDER BY full_name
-    `;
-    const result = await pool.query(q);
-    successResponse(res, result.rows);
+    const users = await db('users')
+      .select('id', 'full_name', 'email', 'role', 'is_active', 'created_at')
+      .orderBy('full_name');
+    return res.status(200).json({ success: true, data: users });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Users Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
 export const getAssignableUsers = async (req, res) => {
   try {
-    const q = `
-      SELECT id, full_name, email, role
-      FROM users
-      WHERE role IN ('developer','qa')
-        AND is_active=true
-      ORDER BY full_name
-    `;
-    const { rows } = await pool.query(q);
-    successResponse(res, rows);
+    const users = await db('users')
+      .select('id', 'full_name', 'email', 'role')
+      .whereIn('role', ['developer', 'qa'])
+      .andWhere({ is_active: true })
+      .orderBy('full_name');
+    return res.status(200).json({ success: true, data: users });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Assignable Users Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
+
 export const getSupervisors = async (req, res) => {
   try {
-    const q = `
-      SELECT id, full_name, email, role
-      FROM users
-      WHERE role IN ('admin', 'Project Manager')
-        AND is_active=true
-      ORDER BY full_name
-    `;
-    const { rows } = await pool.query(q);
-    successResponse(res, rows);
+    const users = await db('users')
+      .select('id', 'full_name', 'email', 'role')
+      .whereIn('role', ['admin', 'Project Manager'])
+      .andWhere({ is_active: true })
+      .orderBy('full_name');
+    return res.status(200).json({ success: true, data: users });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Supervisors Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };

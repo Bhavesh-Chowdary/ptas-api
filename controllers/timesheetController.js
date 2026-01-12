@@ -1,5 +1,4 @@
-import pool from '../config/db.js';
-import { successResponse, errorResponse } from "../utils/apiResponse.js";
+import db from "../config/knex.js";
 import { logChange } from './changeLogController.js';
 
 export const createTimesheet = async (req, res) => {
@@ -7,37 +6,36 @@ export const createTimesheet = async (req, res) => {
     const { task_id, minutes_logged, notes, log_date } = req.body;
     const user_id = req.user.userId;
 
-    if (!minutes_logged || minutes_logged <= 0)
-      return errorResponse(res, 'minutes_logged must be greater than 0', 400);
+    if (!minutes_logged || minutes_logged <= 0) {
+      return res.status(400).json({ success: false, error: 'minutes_logged must be greater than 0' });
+    }
 
-    const q = `
-      INSERT INTO timesheets (user_id, task_id, log_date, minutes_logged, source, notes)
-      VALUES ($1, $2, $3, $4, 'manual', $5)
-      RETURNING *`;
-    const result = await pool.query(q, [
+    const [timesheet] = await db('timesheets').insert({
       user_id,
-      task_id || null,
-      log_date || new Date(),
+      task_id: task_id || null,
+      log_date: log_date || new Date(),
       minutes_logged,
-      notes || null
-    ]);
+      source: 'manual',
+      notes: notes || null
+    }).returning('*');
 
-    /* ---- CLEAR CACHE ---- */
-
-    successResponse(res, result.rows[0], 201);
+    return res.status(201).json({ success: true, data: timesheet });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Create Timesheet Error:", err);
+    return res.status(500).json({ success: false, error: err.message || "Internal server error" });
   }
 };
 
 export const autoLogTime = async (task_id, user_id, minutes, note) => {
   try {
-    await pool.query(
-      `INSERT INTO timesheets (user_id, task_id, log_date, minutes_logged, source, notes)
-       VALUES ($1, $2, CURRENT_DATE, $3, 'auto', $4)`,
-      [user_id, task_id, minutes, note]
-    );
-    /* ---- CLEAR CACHE ---- */
+    await db('timesheets').insert({
+      user_id,
+      task_id,
+      log_date: db.fn.now(),
+      minutes_logged: minutes,
+      source: 'auto',
+      notes: note
+    });
   } catch (err) {
     console.error('Auto-log error:', err.message);
   }
@@ -47,177 +45,122 @@ export const getTimesheets = async (req, res) => {
   try {
     const { user_id, week_start, week_end } = req.query;
 
-    let q = `
-      SELECT t.*, u.full_name AS user_name, ts.title AS task_title, p.name AS project_name
-      FROM timesheets t
-      LEFT JOIN users u ON u.id = t.user_id
-      LEFT JOIN tasks ts ON ts.id = t.task_id
-      LEFT JOIN projects p ON p.id = ts.project_id
-      WHERE 1=1`;
-    const params = [];
+    let query = db('timesheets as t')
+      .leftJoin('users as u', 'u.id', 't.user_id')
+      .leftJoin('tasks as ts', 'ts.id', 't.task_id')
+      .leftJoin('projects as p', 'p.id', 'ts.project_id')
+      .select('t.*', 'u.full_name AS user_name', 'ts.title AS task_title', 'p.name AS project_name')
+      .orderBy('t.log_date', 'desc');
 
-    if (user_id) {
-      params.push(user_id);
-      q += ` AND t.user_id = $${params.length}`;
-    }
-    if (week_start && week_end) {
-      params.push(week_start, week_end);
-      q += ` AND t.log_date BETWEEN $${params.length - 1} AND $${params.length}`;
-    }
+    if (user_id) query = query.where('t.user_id', user_id);
+    if (week_start && week_end) query = query.whereBetween('t.log_date', [week_start, week_end]);
 
-    q += ` ORDER BY t.log_date DESC`;
-    const result = await pool.query(q, params);
-    successResponse(res, result.rows);
+    const timesheets = await query;
+    return res.status(200).json({ success: true, data: timesheets });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Timesheets Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
-// Approve timesheet (with change log)
 export const approveTimesheet = async (req, res) => {
   try {
     const { id } = req.params;
     const approved_by = req.user.userId;
 
-    const before = await pool.query('SELECT * FROM timesheets WHERE id = $1', [id]);
-    if (before.rowCount === 0) return errorResponse(res, 'Timesheet not found', 404);
+    const before = await db('timesheets').where({ id }).first();
+    if (!before) {
+      return res.status(404).json({ success: false, error: "Timesheet not found" });
+    }
 
-    const q = `
-      UPDATE timesheets
-      SET approved_by = $1
-      WHERE id = $2
-      RETURNING *`;
-    const result = await pool.query(q, [approved_by, id]);
-    const after = result.rows[0];
+    const [after] = await db('timesheets').where({ id }).update({ approved_by }).returning('*');
 
-    await logChange('timesheet', id, 'approve', before.rows[0], after, approved_by);
-
-    /* ---- CLEAR CACHE ---- */
-
-    successResponse(res, after);
+    await logChange('timesheet', id, 'approve', before, after, approved_by);
+    return res.status(200).json({ success: true, data: after });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Approve Timesheet Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
-
-// Weekly summary report
 export const getWeeklySummary = async (req, res) => {
   try {
     const { week_start, week_end } = req.query;
+    if (!week_start || !week_end) {
+      return res.status(400).json({ success: false, error: "week_start and week_end are required" });
+    }
 
-    if (!week_start || !week_end)
-      return errorResponse(res, 'week_start and week_end are required', 400);
+    const summary = await db('timesheets as t')
+      .join('users as u', 'u.id', 't.user_id')
+      .whereBetween('t.log_date', [week_start, week_end])
+      .select('u.full_name')
+      .sum('t.minutes_logged as total_minutes')
+      .countDistinct('t.task_id as tasks_worked')
+      .groupBy('u.full_name')
+      .orderBy('total_minutes', 'desc');
 
-    const q = `
-      SELECT u.full_name,
-             SUM(t.minutes_logged) AS total_minutes,
-             COUNT(DISTINCT t.task_id) AS tasks_worked
-      FROM timesheets t
-      JOIN users u ON u.id = t.user_id
-      WHERE t.log_date BETWEEN $1 AND $2
-      GROUP BY u.full_name
-      ORDER BY total_minutes DESC`;
-    const result = await pool.query(q, [week_start, week_end]);
-
-    successResponse(res, result.rows);
+    return res.status(200).json({ success: true, data: summary });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Weekly Summary Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
-/**
- * GENERATE TIMESHEET PREVIEW
- */
 export const getGeneratedTimesheetPreview = async (req, res) => {
   try {
     const { project_id, user_id, start_date, end_date } = req.query;
 
     if (!user_id || !start_date || !end_date) {
-      return errorResponse(res, 'user_id, start_date, and end_date are required', 400);
+      return res.status(400).json({ success: false, error: "user_id, start_date, and end_date are required" });
     }
 
-    // 1. Fetch User & Project Info
-    const userRes = await pool.query('SELECT id, full_name, role, "Emp_id" FROM users WHERE id = $1', [user_id]);
-    const projRes = project_id ? await pool.query('SELECT id, name, project_code FROM projects WHERE id = $1', [project_id]) : { rows: [] };
-
-    if (userRes.rowCount === 0) return errorResponse(res, 'User not found', 404);
-    const user = userRes.rows[0];
-    const project = projRes.rows[0] || { name: 'N/A' };
-
-    // 2. Fetch Daily Logs
-    let logQuery = `
-      SELECT t.*, ts.task_code, ts.title AS task_title
-      FROM timesheets t
-      LEFT JOIN tasks ts ON ts.id = t.task_id
-      WHERE t.user_id = $1 
-        AND t.log_date BETWEEN $2 AND $3
-    `;
-    const logParams = [user_id, start_date, end_date];
-    if (project_id) {
-      logQuery += ` AND ts.project_id = $4`;
-      logParams.push(project_id);
+    const user = await db('users').select('id', 'full_name', 'role', 'Emp_id').where({ id: user_id }).first();
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
     }
-    logQuery += ` ORDER BY t.log_date ASC`;
 
-    const logsRes = await pool.query(logQuery, logParams);
-    const logs = logsRes.rows;
+    const project = project_id ? await db('projects').select('id', 'name', 'project_code').where({ id: project_id }).first() : { name: 'N/A' };
 
-    // 2.5 Fetch all tasks assigned to this user in this project to pre-fill
-    let taskQuery = `
-      SELECT task_code, start_date, end_date 
-      FROM tasks 
-      WHERE assignee_id = $1 
-        AND project_id = $2
-    `;
-    const assignedTasksRes = await pool.query(taskQuery, [user_id, project_id]);
-    const assignedTasks = assignedTasksRes.rows;
+    let logQuery = db('timesheets as t')
+      .leftJoin('tasks as ts', 'ts.id', 't.task_id')
+      .where('t.user_id', user_id)
+      .whereBetween('t.log_date', [start_date, end_date])
+      .select('t.*', 'ts.task_code', 'ts.title AS task_title')
+      .orderBy('t.log_date', 'asc');
 
-    // 3. Generate daily slots from start to end date
+    if (project_id) logQuery = logQuery.where('ts.project_id', project_id);
+    const logs = await logQuery;
+
+    const assignedTasks = await db('tasks')
+      .where({ assignee_id: user_id, project_id })
+      .select('task_code', 'start_date', 'end_date');
+
     const dailyData = [];
-
-    // Force UTC parsing to avoid timezone shifts
     const start = new Date(start_date + 'T00:00:00.000Z');
     const end = new Date(end_date + 'T00:00:00.000Z');
-
     let curr = new Date(start);
 
     while (curr <= end) {
       const dateStr = curr.toISOString().split('T')[0];
       const dayStrDisplay = curr.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
 
-      const dayLogs = logs.filter(l => {
-        const d = new Date(l.log_date);
-        return d.toISOString().split('T')[0] === dateStr;
-      });
+      const dayLogs = logs.filter(l => new Date(l.log_date).toISOString().split('T')[0] === dateStr);
 
       if (dayLogs.length > 0) {
-        // Use existing logs
         dayLogs.forEach(l => {
           const totalMins = l.minutes_logged;
           const regularHours = Math.min(8, totalMins / 60);
           const overtimeHours = Math.max(0, (totalMins / 60) - 8);
-
           dailyData.push({
-            date: dateStr,
-            day: dayStrDisplay,
-            task_id: l.task_code || 'N/A',
-            start_time: '10:00',
-            end_time: '18:00',
-            regular_hrs: regularHours.toFixed(2),
-            overtime_hrs: overtimeHours.toFixed(2),
-            sick_hrs: '0.00',
-            vacation_hrs: '0.00',
-            holiday_hrs: '0.00',
-            other_hrs: '0.00',
-            total_hrs: (totalMins / 60).toFixed(2)
+            date: dateStr, day: dayStrDisplay, task_id: l.task_code || 'N/A',
+            start_time: '10:00', end_time: '18:00', regular_hrs: regularHours.toFixed(2),
+            overtime_hrs: overtimeHours.toFixed(2), sick_hrs: '0.00', vacation_hrs: '0.00',
+            holiday_hrs: '0.00', other_hrs: '0.00', total_hrs: (totalMins / 60).toFixed(2)
           });
         });
       } else {
-        // PRE-FILL LOGIC: If no logs, check for assigned tasks
         const tasksForDay = assignedTasks.filter(t => {
           if (!t.start_date) return false;
-          // Tasks in DB are usually UTC or local but t.start_date as string is often just YYYY-MM-DD
           const sDate = new Date(t.start_date).toISOString().split('T')[0];
           const eDate = t.end_date ? new Date(t.end_date).toISOString().split('T')[0] : sDate;
           return dateStr >= sDate && dateStr <= eDate;
@@ -226,153 +169,103 @@ export const getGeneratedTimesheetPreview = async (req, res) => {
         if (tasksForDay.length > 0) {
           tasksForDay.forEach(t => {
             dailyData.push({
-              date: dateStr,
-              day: dayStrDisplay,
-              task_id: t.task_code || 'N/A',
-              start_time: '10:00',
-              end_time: '18:00',
-              regular_hrs: '8.00',
-              overtime_hrs: '0.00',
-              sick_hrs: '0.00',
-              vacation_hrs: '0.00',
-              holiday_hrs: '0.00',
-              other_hrs: '0.00',
-              total_hrs: '8.00'
+              date: dateStr, day: dayStrDisplay, task_id: t.task_code || 'N/A',
+              start_time: '10:00', end_time: '18:00', regular_hrs: '8.00',
+              overtime_hrs: '0.00', sick_hrs: '0.00', vacation_hrs: '0.00',
+              holiday_hrs: '0.00', other_hrs: '0.00', total_hrs: '8.00'
             });
           });
         } else {
-          // Empty day placeholder
           dailyData.push({
-            date: dateStr,
-            day: dayStrDisplay,
-            task_id: 'N/A',
-            start_time: '',
-            end_time: '',
-            regular_hrs: '0.00',
-            overtime_hrs: '0.00',
-            sick_hrs: '0.00',
-            vacation_hrs: '0.00',
-            holiday_hrs: '0.00',
-            other_hrs: '0.00',
-            total_hrs: '0.00'
+            date: dateStr, day: dayStrDisplay, task_id: 'N/A',
+            start_time: '', end_time: '', regular_hrs: '0.00',
+            overtime_hrs: '0.00', sick_hrs: '0.00', vacation_hrs: '0.00',
+            holiday_hrs: '0.00', other_hrs: '0.00', total_hrs: '0.00'
           });
         }
       }
-
-      // Move to next day in UTC
       curr.setUTCDate(curr.getUTCDate() + 1);
     }
 
     const totalHours = dailyData.reduce((acc, d) => acc + parseFloat(d.total_hrs), 0).toFixed(2);
 
-    successResponse(res, {
-      employee: {
-        id: user.id,
-        name: user.full_name,
-        emp_id: user.Emp_id
-      },
-      project: {
-        id: project.id,
-        name: project.name
-      },
-      start_date: start_date,
-      end_date: end_date,
-      daily_data: dailyData,
-      assigned_tasks: assignedTasks,
-      total_hours: totalHours
+    return res.status(200).json({
+      success: true,
+      data: {
+        employee: { id: user.id, name: user.full_name, emp_id: user.Emp_id },
+        project: { id: project.id, name: project.name },
+        start_date, end_date, daily_data: dailyData,
+        assigned_tasks: assignedTasks, total_hours: totalHours
+      }
     });
   } catch (err) {
-    console.error("getGeneratedTimesheetPreview error:", err);
-    errorResponse(res, err.message);
+    console.error("Get Generated Timesheet Preview Error:", err);
+    return res.status(500).json({ success: false, error: err.message || "Internal server error" });
   }
 };
 
-/**
- * SAVE TIMESHEET
- */
 export const saveTimesheet = async (req, res) => {
   try {
-    const {
-      project_id,
-      user_id,
-      supervisor_id,
-      start_date,
-      end_date,
-      daily_data,
-      total_hours,
-      status
-    } = req.body;
+    const { project_id, user_id, supervisor_id, start_date, end_date, daily_data, total_hours, status } = req.body;
 
-    const q = `
-      INSERT INTO weekly_timesheets 
-      (project_id, user_id, supervisor_id, week_start, week_end, daily_data, total_hours, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING *
-    `;
-    const result = await pool.query(q, [
-      project_id || null,
+    const [timesheet] = await db('weekly_timesheets').insert({
+      project_id: project_id || null,
       user_id,
-      supervisor_id || null,
-      start_date,
-      end_date,
-      JSON.stringify(daily_data),
+      supervisor_id: supervisor_id || null,
+      week_start: start_date,
+      week_end: end_date,
+      daily_data: JSON.stringify(daily_data),
       total_hours,
-      status || 'draft'
-    ]);
+      status: status || 'draft'
+    }).returning('*');
 
-    successResponse(res, result.rows[0], 201);
+    return res.status(201).json({ success: true, data: timesheet });
   } catch (err) {
-    console.error("saveTimesheet error:", err);
-    errorResponse(res, err.message);
+    console.error("Save Timesheet Error:", err);
+    return res.status(500).json({ success: false, error: err.message || "Internal server error" });
   }
 };
 
-/**
- * GET TIMESHEET HISTORY
- */
 export const getTimesheetHistory = async (req, res) => {
   try {
     const { role, userId } = req.user;
-    let q = `
-      SELECT wt.*, u.full_name AS employee_name, s.full_name AS supervisor_name, p.name AS project_name
-      FROM weekly_timesheets wt
-      LEFT JOIN users u ON u.id = wt.user_id
-      LEFT JOIN users s ON s.id = wt.supervisor_id
-      LEFT JOIN projects p ON p.id = wt.project_id
-    `;
-    const params = [];
+    let query = db('weekly_timesheets as wt')
+      .leftJoin('users as u', 'u.id', 'wt.user_id')
+      .leftJoin('users as s', 's.id', 'wt.supervisor_id')
+      .leftJoin('projects as p', 'p.id', 'wt.project_id')
+      .select('wt.*', 'u.full_name AS employee_name', 's.full_name AS supervisor_name', 'p.name AS project_name')
+      .orderBy('wt.created_at', 'desc');
 
     if (role === 'developer' || role === 'qa') {
-      q += ` WHERE wt.user_id = $1`;
-      params.push(userId);
+      query = query.where('wt.user_id', userId);
     }
 
-    q += ` ORDER BY wt.created_at DESC`;
-    const result = await pool.query(q, params);
-    successResponse(res, result.rows);
+    const history = await query;
+    return res.status(200).json({ success: true, data: history });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Timesheet History Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
-/**
- * GET TIMESHEET BY ID
- */
 export const getTimesheetById = async (req, res) => {
   try {
     const { id } = req.params;
-    const q = `
-      SELECT wt.*, u.full_name AS employee_name, u."Emp_id" AS emp_id, s.full_name AS supervisor_name, p.name AS project_name
-      FROM weekly_timesheets wt
-      LEFT JOIN users u ON u.id = wt.user_id
-      LEFT JOIN users s ON s.id = wt.supervisor_id
-      LEFT JOIN projects p ON p.id = wt.project_id
-      WHERE wt.id = $1
-    `;
-    const result = await pool.query(q, [id]);
-    if (result.rowCount === 0) return errorResponse(res, 'Timesheet not found', 404);
-    successResponse(res, result.rows[0]);
+    const timesheet = await db('weekly_timesheets as wt')
+      .leftJoin('users as u', 'u.id', 'wt.user_id')
+      .leftJoin('users as s', 's.id', 'wt.supervisor_id')
+      .leftJoin('projects as p', 'p.id', 'wt.project_id')
+      .where('wt.id', id)
+      .select('wt.*', 'u.full_name AS employee_name', 'u.Emp_id AS emp_id', 's.full_name AS supervisor_name', 'p.name AS project_name')
+      .first();
+
+    if (!timesheet) {
+      return res.status(404).json({ success: false, error: "Timesheet not found" });
+    }
+
+    return res.status(200).json({ success: true, data: timesheet });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Timesheet By ID Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };

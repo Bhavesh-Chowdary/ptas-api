@@ -1,9 +1,8 @@
-import pool from '../config/db.js';
-import { successResponse, errorResponse } from "../utils/apiResponse.js";
+import db from "../config/knex.js";
 
 export const getProjectOverview = async (req, res) => {
   try {
-    const q = `
+    const rawQuery = `
       SELECT 
         p.id,
         p.name,
@@ -20,19 +19,22 @@ export const getProjectOverview = async (req, res) => {
       GROUP BY p.id
       ORDER BY p.created_at DESC;
     `;
-    const result = await pool.query(q);
-    successResponse(res, result.rows);
+    const { rows } = await db.raw(rawQuery);
+    return res.status(200).json({ success: true, data: rows });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Project Overview Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
 export const getSprintSummary = async (req, res) => {
   try {
     const { sprint_id } = req.query;
-    if (!sprint_id) return errorResponse(res, 'sprint_id is required', 400);
+    if (!sprint_id) {
+      return res.status(400).json({ success: false, error: 'sprint_id is required' });
+    }
 
-    const q = `
+    const rawQuery = `
       SELECT 
         s.id AS sprint_id,
         s.name AS sprint_name,
@@ -47,20 +49,23 @@ export const getSprintSummary = async (req, res) => {
         ) AS completion_percentage
       FROM sprints s
       LEFT JOIN tasks t ON s.id = t.sprint_id
-      WHERE s.id = $1
+      WHERE s.id = ?
       GROUP BY s.id;
     `;
-    const result = await pool.query(q, [sprint_id]);
-    if (result.rowCount === 0) return errorResponse(res, 'Sprint not found', 404);
-    successResponse(res, result.rows[0]);
+    const { rows } = await db.raw(rawQuery, [sprint_id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Sprint not found' });
+    }
+    return res.status(200).json({ success: true, data: rows[0] });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Sprint Summary Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
 export const getResourceAllocation = async (req, res) => {
   try {
-    const q = `
+    const rawQuery = `
       SELECT 
         u.id AS user_id,
         u.full_name,
@@ -73,20 +78,22 @@ export const getResourceAllocation = async (req, res) => {
       GROUP BY u.id
       ORDER BY total_hours DESC;
     `;
-    const result = await pool.query(q);
-    successResponse(res, result.rows);
+    const { rows } = await db.raw(rawQuery);
+    return res.status(200).json({ success: true, data: rows });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Resource Allocation Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
 export const getTimesheetCompliance = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
-    if (!start_date || !end_date)
-      return errorResponse(res, 'start_date and end_date are required', 400);
+    if (!start_date || !end_date) {
+      return res.status(400).json({ success: false, error: 'start_date and end_date are required' });
+    }
 
-    const q = `
+    const rawQuery = `
       WITH user_hours AS (
         SELECT 
           u.id AS user_id,
@@ -94,12 +101,12 @@ export const getTimesheetCompliance = async (req, res) => {
           COALESCE(SUM(t.minutes_logged), 0) / 60 AS logged_hours
         FROM users u
         LEFT JOIN timesheets t ON u.id = t.user_id
-        WHERE t.log_date BETWEEN $1 AND $2
+        WHERE t.log_date BETWEEN ? AND ?
         GROUP BY u.id
       ),
       workdays AS (
         SELECT COUNT(*) AS days
-        FROM generate_series($1::date, $2::date, '1 day') g
+        FROM generate_series(?::date, ?::date, '1 day') g
         WHERE EXTRACT(ISODOW FROM g) < 6
       )
       SELECT 
@@ -110,9 +117,10 @@ export const getTimesheetCompliance = async (req, res) => {
       FROM user_hours uh, workdays
       ORDER BY compliance_percentage DESC;
     `;
-    const result = await pool.query(q, [start_date, end_date]);
-    successResponse(res, result.rows);
+    const { rows } = await db.raw(rawQuery, [start_date, end_date, start_date, end_date]);
+    return res.status(200).json({ success: true, data: rows });
   } catch (err) {
-    errorResponse(res, err.message);
+    console.error("Get Timesheet Compliance Error:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
