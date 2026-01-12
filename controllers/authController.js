@@ -2,12 +2,6 @@ import db from '../config/knex.js';
 import bcrypt from 'bcrypt';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../config/jwt.js';
 
-const normalizeRole = (role) => {
-  if (role === 'pm') return 'Project Manager';
-  if (role === 'administrator') return 'admin';
-  return role || 'developer';
-};
-
 export const register = async (req, res) => {
   try {
     const { full_name, email, password, role } = req.body;
@@ -16,13 +10,14 @@ export const register = async (req, res) => {
     }
 
     const hashed = await bcrypt.hash(password, 10);
-    const normalizedRole = normalizeRole(role);
+    // Use role directly or fallback to 'developer'
+    const finalRole = role || 'developer';
 
     const [user] = await db('users').insert({
       full_name,
       email,
       password_hash: hashed,
-      role: normalizedRole
+      role: finalRole
     }).returning(['id', 'full_name', 'email', 'role']);
 
     return res.status(201).json({ success: true, data: { user } });
@@ -54,15 +49,15 @@ export const login = async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid email or password' });
     }
 
-    const normalizedRole = normalizeRole(user.role);
-    const payload = { userId: user.id, email: user.email, role: normalizedRole };
+    const role = user.role;
+    const payload = { userId: user.id, email: user.email, role };
     const accessToken = await signAccessToken(payload);
     const refreshToken = await signRefreshToken({ userId: user.id });
 
     return res.status(200).json({
       success: true,
       data: {
-        user: { id: user.id, full_name: user.full_name, email: user.email, role: normalizedRole },
+        user: { id: user.id, full_name: user.full_name, email: user.email, role },
         accessToken,
         refreshToken
       }
@@ -88,8 +83,8 @@ export const refresh = async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    const normalizedRole = normalizeRole(user.role);
-    const payload = { userId: user.id, email: user.email, role: normalizedRole };
+    const role = user.role;
+    const payload = { userId: user.id, email: user.email, role };
     const newAccessToken = await signAccessToken(payload);
     const newRefreshToken = await signRefreshToken({ userId: user.id });
 
