@@ -42,16 +42,42 @@ export const getSupervisors = async (req, res) => {
 
 export const savePlayerId = async (req, res) => {
   try {
+    console.log('[SavePlayerId] Request received');
+    console.log('[SavePlayerId] User:', req.user);
+    console.log('[SavePlayerId] Body:', req.body);
+
     const { userId } = req.user;
     const { playerId } = req.body;
 
-    await db("users")
+    if (!userId) {
+      console.error('[SavePlayerId] No userId found in request');
+      return res.status(400).json({ success: false, error: "User ID not found" });
+    }
+
+    if (!playerId) {
+      console.error('[SavePlayerId] No playerId provided');
+      return res.status(400).json({ success: false, error: "Player ID not provided" });
+    }
+
+    console.log(`[SavePlayerId] Updating user ${userId} with player ID: ${playerId}`);
+
+    const result = await db("users")
       .where({ id: userId })
       .update({ onesignal_player_id: playerId });
 
-    return res.json({ success: true });
+    console.log('[SavePlayerId] Update result:', result);
+
+    // Verify the update
+    const user = await db("users")
+      .where({ id: userId })
+      .select('id', 'full_name', 'onesignal_player_id')
+      .first();
+
+    console.log('[SavePlayerId] Updated user:', user);
+
+    return res.json({ success: true, data: { playerId, user } });
   } catch (err) {
-    console.error("Save Player ID Error:", err);
-    return res.status(500).json({ success: false, error: "Internal server error" });
+    console.error("[SavePlayerId] Error:", err);
+    return res.status(500).json({ success: false, error: err.message || "Internal server error" });
   }
 };
