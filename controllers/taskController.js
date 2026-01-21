@@ -1,6 +1,7 @@
 import db from "../config/knex.js";
 import { autoLogTime } from "./timesheetController.js";
 import { logChange } from "./changeLogController.js";
+import { createNotification } from "./notificationController.js";
 
 // Helper to extract ID from user object if needed
 const getUserId = (user) => (typeof user === "object" ? user.id : user);
@@ -159,6 +160,20 @@ export const createTask = async (req, res) => {
     });
 
     await logChange("task", finalTask.id, "created", null, finalTask, userId);
+
+    // Notify Assignee
+    if (finalTask.assignee_id && finalTask.assignee_id !== userId) {
+      await createNotification({
+        user_id: finalTask.assignee_id,
+        sender_id: userId,
+        project_id: finalTask.project_id,
+        type: 'task_assigned',
+        title: 'New Task Assigned',
+        message: `You have been assigned: ${finalTask.title}`,
+        data: { task_id: finalTask.id, project_id: finalTask.project_id }
+      });
+    }
+
     return res.status(201).json({ success: true, data: finalTask });
   } catch (error) {
     console.error("Create Task Error:", error);
@@ -350,6 +365,26 @@ export const updateTask = async (req, res) => {
     });
 
     await logChange("task", id, "updated", before, updatedTask, userId);
+
+    // Notify about status changes
+    if (status && status !== before.status) {
+      const isDone = status.toLowerCase() === 'done';
+      const isDeveloper = role.toLowerCase() === 'developer';
+
+      // If developer finishes a task, notify the creator/PM
+      if (isDone && isDeveloper) {
+        await createNotification({
+          user_id: updatedTask.created_by,
+          sender_id: userId,
+          project_id: updatedTask.project_id,
+          type: 'task_completed',
+          title: 'Task Completed',
+          message: `${updatedTask.assignee_name || 'Assignee'} finished: ${updatedTask.title}`,
+          data: { task_id: id, project_id: updatedTask.project_id }
+        });
+      }
+    }
+
     if (status === "in_progress" && before.status !== "in_progress") {
       await autoLogTime(id, userId, 30, "Auto-log: Task started");
     }

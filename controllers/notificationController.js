@@ -38,6 +38,54 @@ export const initNotificationsTable = async () => {
 };
 
 /**
+ * Helper to create a notification and send push if possible
+ */
+export const createNotification = async ({
+    user_id,
+    sender_id,
+    project_id,
+    type,
+    title,
+    message,
+    data = {}
+}) => {
+    try {
+        if (!user_id) return;
+
+        // 1. Insert into DB
+        const [notif] = await db("notifications").insert({
+            user_id,
+            sender_id: sender_id || null,
+            project_id: project_id || null,
+            type: type || 'info',
+            title,
+            message,
+            data: JSON.stringify(data)
+        }).returning("*");
+
+        // 2. Send Push Notification if player ID exists
+        const user = await db("users")
+            .where({ id: user_id })
+            .whereNotNull("onesignal_player_id")
+            .select("onesignal_player_id")
+            .first();
+
+        if (user?.onesignal_player_id) {
+            await sendPushNotification({
+                playerIds: [user.onesignal_player_id],
+                title,
+                message,
+                data
+            });
+        }
+
+        return notif;
+    } catch (error) {
+        console.error("Error creating notification helper:", error);
+    }
+};
+
+/**
  * Get notifications for a user
  * Also refreshes automatic reminders
  */
