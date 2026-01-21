@@ -65,7 +65,12 @@ export const savePlayerId = async (req, res) => {
       .where({ id: userId })
       .update({ onesignal_player_id: playerId });
 
-    console.log('[SavePlayerId] Update result:', result);
+    console.log('[SavePlayerId] Rows updated:', result);
+
+    if (result === 0) {
+      console.warn(`[SavePlayerId] User with ID ${userId} not found or no change made.`);
+      // Note: update returns 0 if no rows match, but also if rows match but no column was changed.
+    }
 
     // Verify the update
     const user = await db("users")
